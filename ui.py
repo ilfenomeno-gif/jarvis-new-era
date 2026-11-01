@@ -3752,7 +3752,7 @@ class MainWindow(QMainWindow):
             self._header_panel.hide()
             self._content_panel.hide()
             self._footer_panel.hide()
-            self.setWindowTitle("JARVIS VII · MIRA")
+            self.setWindowTitle("JARVIS VII · IRIS")
             self._center_split.setSizes([self._center_split.height(), 0])
         else:
             self._hud_cam_stack.setCurrentWidget(self.hud)
