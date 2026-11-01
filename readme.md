@@ -27,7 +27,10 @@ La HUD originale con mappa 3D è la schermata iniziale. L'avatar è presentato c
 **Iris** nell'interfaccia, ma viene ancora fornito dal sito esterno
 `https://mira-humanoid.vercel.app/`; viene caricato solo quando si pronuncia o si invia
 il comando esatto **“Iris rivelati”**; **“Iris nasconditi”** lo richiude.
-Quando viene rivelata, Iris sostituisce la mappa e la HUD a schermo intero.
+Quando viene rivelata, Iris sostituisce la mappa a schermo intero e lascia visibile
+solo la chat flottante. Il rendering Three.js della mappa viene sospeso mentre Iris
+è aperta; sulla mappa la scena è limitata a 30 FPS e pixel ratio 1,5 per contenere
+il carico GPU.
 L'iframe è cross-origin: la HUD non può rinominare il contenuto interno del sito,
 premere automaticamente il suo pulsante ENTER né sincronizzarne gli stati senza
 un'API supportata dal provider. ENTER richiede un gesto utente per avviare l'audio.

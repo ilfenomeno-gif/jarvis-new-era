@@ -64,7 +64,12 @@ body::after{content:"";position:fixed;inset:0;z-index:4;pointer-events:none;back
 #humanoidWrap{position:fixed;inset:0;width:100vw;height:100vh;z-index:50;background:#000;display:flex;flex-direction:column}
 #humanoidWrap[hidden]{display:none}
 body.iris-mode #gl,body.iris-mode #tags{display:none}
-body.iris-mode .hud,body.iris-mode #hudRestore,body.iris-mode #pop{display:none!important}
+body.iris-mode .hud{display:block;position:fixed;inset:0;z-index:60;padding:0;pointer-events:none}
+body.iris-mode .hud>*:not(#info){display:none!important}
+body.iris-mode #info{display:flex!important;position:fixed;left:16px;right:auto;top:auto;bottom:16px;width:min(440px,calc(100vw - 32px));height:min(34vh,300px);min-height:160px;z-index:60;pointer-events:auto;background:rgba(1,13,20,.88)}
+body.iris-mode #tabs,body.iris-mode #tr{display:none!important}
+body.iris-mode #chat{display:flex!important}
+body.iris-mode #hudRestore,body.iris-mode #pop{display:none!important}
 #humanoidHead{position:absolute;top:10px;right:12px;z-index:2;display:flex;align-items:center;gap:12px;padding:5px 9px;font:800 11px Orbitron,sans-serif;letter-spacing:.12em;color:var(--cy);background:var(--panel);border:1px solid var(--line)}
 #humanoidHead button{background:transparent;border:none;color:var(--am);font-size:18px;cursor:pointer}
 #humanoidFrame{flex:1;width:100%;height:100%;border:none;background:#000}
@@ -210,7 +215,7 @@ setInterval(()=>$("clock").textContent=new Date().toLocaleTimeString("it-IT"),10
 /* ---------- 3D ---------- */
 const T=THREE,reduce=matchMedia("(prefers-reduced-motion:reduce)").matches,K=reduce?0:1;
 const cv=$("gl");let R;try{R=new T.WebGLRenderer({canvas:cv,antialias:true})}catch(e){document.body.insertAdjacentHTML("beforeend","<p style='position:fixed;inset:40% 0 0;text-align:center'>WebGL non disponibile su questo dispositivo.</p>")}
-R.setPixelRatio(Math.min(devicePixelRatio,2));R.toneMapping=T.ACESFilmicToneMapping;R.toneMappingExposure=1.2;R.outputEncoding=T.sRGBEncoding;
+R.setPixelRatio(Math.min(devicePixelRatio||1,1.5));R.toneMapping=T.ACESFilmicToneMapping;R.toneMappingExposure=1.2;R.outputEncoding=T.sRGBEncoding;
 const sc=new T.Scene();sc.background=new T.Color(0x00060a);sc.fog=new T.FogExp2(0x00060a,.022);
 const cam=new T.PerspectiveCamera(48,1,.1,160);
 const cvs=(w,h)=>{const c=document.createElement("canvas");c.width=w;c.height=h;return c};
@@ -297,8 +302,8 @@ async function run(name){setVisualMode("map");if(view!=="main")openSystem(null);
 // ------- onda microfono -------
 const wc=$("wave"),wg=wc.getContext("2d");function wave(t){wg.clearRect(0,0,440,84);wg.strokeStyle="#00d4ff";wg.lineWidth=2;wg.beginPath();for(let x=0;x<=440;x+=3){const y=42+Math.sin(x*.05+t*4)*14*amp*Math.sin(x*.012+t)+Math.sin(x*.13-t*7)*6*amp;x?wg.lineTo(x,y):wg.moveTo(x,y)}wg.stroke()}
 // ------- loop -------
-let t=0,last=performance.now();
-function frame(now){const dt=Math.min((now-last)/1000,.05);last=now;t+=dt*K;
+let t=0,last=performance.now(),lastRender=0,renderFrame=0;
+function frame(now){if(document.body.classList.contains("iris-mode")){renderFrame=0;return}if(now-lastRender<1000/30){renderFrame=requestAnimationFrame(frame);return}const dt=Math.min((now-last)/1000,.05);last=now;lastRender=now;t+=dt*K;
  tY+=dt*.05*K;yaw+=(tY-yaw)*.08;pit+=(tP-pit)*.08;
  cam.position.set(Math.sin(yaw)*Math.cos(pit)*dist,Math.sin(pit)*dist,Math.cos(yaw)*Math.cos(pit)*dist);cam.lookAt(0,0,0);
  br+=(amp-br)*.12;sp+=dt*(br-.25)*2.2*K;ia.rotation.y=t*.15+sp;ia.rotation.x=Math.sin(t*.2)*.3;ib.rotation.y=-t*.25-sp*1.3;ib.rotation.z=t*.1;mol.scale.setScalar(1+.04*Math.sin(t*2)+(br-.25)*.22*(1+.3*Math.sin(t*14)));ia.material.opacity=.8+.15*Math.sin(t*3);
@@ -312,7 +317,7 @@ function frame(now){const dt=Math.min((now-last)/1000,.05);last=now;t+=dt*K;
  else{const e=1-Math.pow(1-Math.min(1,vt*1.8),3);[core,orb1,orb2,orb3].forEach(o=>o.scale.setScalar(e))}
  vt+=dt;selRing.visible=view==="main"&&sel==="core";selRing.position.copy(wp(sel,V));selRing.lookAt(cam.position);selRing.scale.setScalar((sel==="core"?2.7:1)*(1+.06*Math.sin(t*6)));
  for(let i=pulses.length-1;i>=0;i--){const p=pulses[i];p.t+=dt/.9;if(p.t>=1){sc.remove(p.s);pulses.splice(i,1);continue}wp(p.a,A);wp(p.b,B);p.s.position.lerpVectors(A,B,p.t);p.s.position.y+=Math.sin(p.t*Math.PI)*.8;p.s.scale.setScalar(.7+Math.sin(p.t*Math.PI)*.5)}
- placePop();wave(now/1000);R.render(sc,cam);requestAnimationFrame(frame)}
+ placePop();wave(now/1000);R.render(sc,cam);renderFrame=requestAnimationFrame(frame)}
 
 const esc=x=>x.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])),norm=x=>x.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"");
 const TB=[...document.querySelectorAll("#tabs button")];TB.forEach(b=>b.onclick=()=>{TB.forEach(x=>x.classList.toggle("on",x===b));["chat","dati","sistema"].forEach(i=>$(i).hidden=i!==b.dataset.t)});
@@ -356,7 +361,8 @@ function setTopView(on){topView=on=on===undefined?!topView:on;setVisualMode("map
 $("topview").onclick=()=>setTopView();
 const HUMANOID_URL="https://mira-humanoid.vercel.app/";
 let humanoidLoaded=false;
-function revealHumanoid(on){const wrap=$("humanoidWrap");on=on===undefined?wrap.hidden:on;wrap.hidden=!on;document.body.classList.toggle("iris-mode",on);$("humanoid").classList.toggle("on",on);if(on&&!humanoidLoaded){$("humanoidFrame").src=HUMANOID_URL;humanoidLoaded=true}if(on)say("system","Iris rivelata a schermo intero. Se richiesto dal sito, premi ENTER per avviare l'audio.")}
+function activateChat(){document.querySelectorAll("#tabs button").forEach(b=>b.classList.toggle("on",b.dataset.t==="chat"));$("chat").hidden=false;$("dati").hidden=true;$("sistema").hidden=true}
+function revealHumanoid(on){const wrap=$("humanoidWrap");on=on===undefined?wrap.hidden:on;wrap.hidden=!on;document.body.classList.toggle("iris-mode",on);$("humanoid").classList.toggle("on",on);if(on){activateChat();if(renderFrame){cancelAnimationFrame(renderFrame);renderFrame=0}if(!humanoidLoaded){$("humanoidFrame").src=HUMANOID_URL;humanoidLoaded=true}}else if(!renderFrame){last=performance.now();lastRender=0;renderFrame=requestAnimationFrame(frame)}if(on)say("system","Iris rivelata a schermo intero. Se richiesto dal sito, premi ENTER per avviare l'audio.")}
 $("humanoid").onclick=()=>revealHumanoid();
 $("mapview").onclick=()=>setVisualMode("map");
 $("humanoidClose").onclick=()=>revealHumanoid(false);
@@ -388,7 +394,7 @@ function formatUptime(s){if(!Number.isFinite(s))return"N/D";const m=Math.floor(s
 // Telemetria reale dal bridge (nessuna gauge simulata).
 function renderStats(stats){const s=stats||{};const pc=v=>Number.isFinite(v)?Math.round(v)+"%":"N/D";setG("CPU",s.cpu,pc(s.cpu));setG("MEM",s.ram,pc(s.ram));setG("NET",Number.isFinite(s.net)?Math.min(100,s.net/1048576*10):null,formatRate(s.net));setG("GPU",s.gpu,pc(s.gpu));setG("TMP",Number.isFinite(s.temperature)?s.temperature:null,Number.isFinite(s.temperature)?s.temperature.toFixed(0)+"°":null);setG("UP",Number.isFinite(s.uptime)?Math.min(100,s.uptime/86400*100):null,formatUptime(s.uptime));setG("PROC",Number.isFinite(s.processes)?Math.min(100,s.processes/10):null,Number.isFinite(s.processes)?String(s.processes):null);setG("OS",s.os?100:null,s.os||null)}
 function renderPlugins(items){/* i plugin sono mostrati come pianeti nella mappa; toggle via bridge */window._plugins=Array.isArray(items)?items:[]}
-pick("core",false);requestAnimationFrame(frame);
+pick("core",false);renderFrame=requestAnimationFrame(frame);
 </script>
 </body>
 </html>

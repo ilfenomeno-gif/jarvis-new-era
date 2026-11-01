@@ -21,14 +21,20 @@ def test_hud_html_has_top_view_humanoid_scale():
     assert "chat-only" not in html
     assert 'id="humanoidWrap" hidden' in html
     assert '#humanoidWrap{position:fixed;inset:0;width:100vw;height:100vh' in html
-    assert 'body.iris-mode .hud,body.iris-mode #hudRestore,body.iris-mode #pop{display:none!important}' in html
+    assert 'body.iris-mode .hud>*:not(#info){display:none!important}' in html
+    assert 'body.iris-mode #tabs,body.iris-mode #tr{display:none!important}' in html
+    assert 'body.iris-mode #chat{display:flex!important}' in html
     assert 'document.body.classList.toggle("iris-mode",on)' in html
+    assert 'function activateChat()' in html
+    assert 'cancelAnimationFrame(renderFrame)' in html
+    assert 'setPixelRatio(Math.min(devicePixelRatio||1,1.5))' in html
+    assert 'now-lastRender<1000/30' in html
     assert 'src="about:blank"' in html
     assert 'let visualMode="map"' in html
     assert 'setVisualMode("mira")' not in html
     assert 'id="humanoidFrame"' in html
     assert 'const HUMANOID_URL="https://mira-humanoid.vercel.app/"' in html
-    assert 'if(on&&!humanoidLoaded){$("humanoidFrame").src=HUMANOID_URL' in html
+    assert 'if(!humanoidLoaded){$("humanoidFrame").src=HUMANOID_URL;humanoidLoaded=true}' in html
     assert 'id="mapview"' in html
     assert 'id="hudHide"' in html
     assert 'id="hudRestore"' in html
