@@ -317,6 +317,26 @@ def save_output_device(name: str) -> None:
     _patch_config(output_device=(name or "").strip())
 
 
+# ── HUD centrepiece (optional holographic avatar, ported from Mark-LVI) ──────
+HUD_STYLES = ("core", "face")
+
+
+def get_hud_style() -> str:
+    """Which centrepiece the HUD draws: the reactor "core" (default, current B
+    behaviour) or the animated holographic "face" (opt-in, from Mark-LVI).
+
+    Defaults to "core" so an untouched config behaves exactly as before — the
+    avatar is strictly opt-in per the JARVIS VII spec (P5: avatar dietro config).
+    """
+    v = str(load_api_keys().get("hud_style", "core")).strip().lower()
+    return v if v in HUD_STYLES else "core"
+
+
+def save_hud_style(style: str) -> None:
+    s = str(style or "").strip().lower()
+    _patch_config(hud_style=s if s in HUD_STYLES else "core")
+
+
 def get_plugin_enabled(plugin_name: str) -> bool:
     """Plugins are enabled by default the moment they're discovered (opt-out model)."""
     return load_api_keys().get("plugins_enabled", {}).get(plugin_name, True)

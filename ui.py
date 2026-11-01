@@ -513,6 +513,23 @@ class HudCanvas(QWidget):
         self._error_flash = 0.0
         self._assistant_name = assistant_name
 
+        # Optional holographic avatar (ported from Mark-LVI), strictly opt-in:
+        # drawn only when hud_style == "face" AND core.avatar imports cleanly.
+        # Default hud_style is "core" (see memory.config_manager), so an
+        # untouched install renders exactly as before.
+        self._holo_avatar = None
+        try:
+            from memory.config_manager import get_hud_style
+            self._hud_style = get_hud_style()
+        except Exception:
+            self._hud_style = "core"
+        if self._hud_style == "face":
+            try:
+                from core.avatar import HoloAvatar
+                self._holo_avatar = HoloAvatar()
+            except Exception:
+                self._holo_avatar = None
+
         self._tick       = 0
         self._scale      = 1.0
         self._tgt_scale  = 1.0
@@ -645,6 +662,15 @@ class HudCanvas(QWidget):
         
         dt = now - getattr(self, '_last_step_t', now)
         self._last_step_t = now
+
+        # Optional holographic avatar: advance its animation off the same
+        # smoothed audio level the core uses, so the mouth never drifts.
+        if self._holo_avatar is not None:
+            try:
+                self._holo_avatar.step(dt, amp, speaking=self.speaking,
+                                       muted=self.muted, state=self.state)
+            except Exception:
+                pass
 
         # Slow "breathing" base target (random shimmer), refreshed on a timer.
         if not self.reduced_motion and now - self._last_t > (
@@ -882,6 +908,16 @@ class HudCanvas(QWidget):
 
         self._draw_quantum_blueprint(p, W, H, cx, cy, fw, state_color)
 
+        # Optional holographic avatar, drawn as the centrepiece when enabled.
+        # Replaces the reactor core visually; everything else (rings, scanners,
+        # status text) is unchanged.
+        if self._holo_avatar is not None:
+            try:
+                self._holo_avatar.paint(p, cx, cy, fw * 0.31,
+                                        qcol(state_color), qcol(accent_color),
+                                        bg=qcol(C.BG))
+            except Exception:
+                pass
         # tick marks, crosshair and corner brackets live in the static cache
 
         # particles
