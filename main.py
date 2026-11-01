@@ -42,6 +42,7 @@ import time
 import json
 import sys
 import traceback
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -965,6 +966,10 @@ class JarvisLive:
 
         self._enhanced_live = True  # affective dialog + proactive audio; auto-disabled if the server rejects them
         self._thinking_enabled = True
+        # Engine layer (ported from Mark-LVI): None = Gemini Live; a dict of
+        # capabilities = a local pipeline engine is holding the conversation.
+        self._engine_caps        = None
+        self._engine             = None
         _core_names = {t["name"] for t in TOOL_DECLARATIONS}
         self._action_registry = discover_actions(
             actions_dir=Path(__file__).resolve().parent / "actions",
@@ -1970,6 +1975,125 @@ class JarvisLive:
 
     def _select_local_tool_declarations(self, text: str) -> list:
         return self._tool_router.select_for_request(text, self._all_tool_declarations())
+
+    # ── Which engine holds the conversation ──────────────────────────────────
+    # Everything in this section is inert on a default install: `_engine_mode()`
+    # reads one key out of the config that is already loaded, gets "gemini", and
+    # returns before the providers package is imported. Delete the folder and
+    # the import below raises ImportError, which is caught and reported as
+    # "providers are not installed" — the assistant then runs exactly as it did
+    # before any of this existed.
+    def _engine_mode(self) -> str:
+        try:
+            from memory.config_manager import get_provider_mode
+            return get_provider_mode()
+        except Exception:
+            return "gemini"
+
+    def _resolve_engine_caps(self):
+        """What the chosen engine can do — or None for Gemini Live.
+
+        Called BEFORE `_build_config()`, because the tool declarations depend on
+        the answer. Building the providers here rather than later is deliberate:
+        the registry caches them by configuration, so the objects made now are
+        the same ones the engine gets a moment later, and a misconfiguration is
+        reported while there is still a Gemini session to fall back to.
+        """
+        if self._engine_mode() != "pipeline":
+            return None
+        try:
+            from memory.config_manager import get_pipeline, get_provider_config
+            from providers import registry
+
+            pipe = get_pipeline()
+            llm_id = str(pipe.get("llm") or "").strip()
+            if not llm_id:
+                raise RuntimeError("no language model is chosen")
+            missing = registry.missing_fields(llm_id, get_provider_config(llm_id))
+            if missing:
+                raise RuntimeError(f"{llm_id} needs: {', '.join(missing)}")
+            llm = registry.build(llm_id, get_provider_config(llm_id))
+
+            # Ask the model whether it can see, once, and remember the answer.
+            #
+            # This decides whether `screen_process` is declared at all, so it
+            # has to be settled BEFORE the config is built. Leaving it to the
+            # panel's TEST button meant that anybody who never pressed it ran a
+            # vision model with its eyes switched off — silently, and for every
+            # session. Measured once per model, in about a second, then read
+            # from the settings for ever after.
+            from memory.config_manager import save_provider_config
+            ensure = getattr(llm, "ensure_vision_known", None)
+            if ensure is not None:
+                try:
+                    seen = ensure(lambda v, _id=llm_id: save_provider_config(_id, v))
+                    self.ui.write_log(
+                        f"SYS: {llm_id} "
+                        + ("can see images." if seen else "is text only."))
+                except Exception as e:
+                    print(f"[JARVIS] vision check skipped: {e}")
+
+            caps = dict(getattr(llm, "caps", {}) or {})
+            caps["audio_out"] = bool(str(pipe.get("tts") or "").strip())
+            return caps
+        except Exception as e:
+            # A local engine that will not start must never mean no assistant.
+            # Falling back to Live is the whole reason the ladder exists, and
+            # the reason is said out loud rather than left in a console.
+            self.ui.write_log(f"SYS: local engine unavailable ({e}) — "
+                              f"using Gemini Live.")
+            print(f"[JARVIS] Pipeline engine unavailable: {e}")
+            return None
+
+    @asynccontextmanager
+    async def _open_session(self, live_model: str, config):
+        """The conversation, from whichever engine is configured.
+
+        Both branches yield an object with the same four methods and the same
+        event shapes, which is the entire contract — see providers/base.py. The
+        Live branch is unchanged from what it has always been, down to the
+        client being rebuilt on every reconnect.
+        """
+        if self._engine_caps is None:
+            client = genai.Client(
+                api_key=_get_api_key(),
+                http_options={"api_version":
+                              "v1alpha" if self._enhanced_live else "v1beta"},
+            )
+            async with client.aio.live.connect(model=live_model,
+                                               config=config) as session:
+                yield session
+            return
+
+        from memory.config_manager import get_pipeline, get_provider_config
+        from providers import registry
+        from providers.engine_pipeline import PipelineEngine
+
+        pipe = get_pipeline()
+
+        def part(slot):
+            pid = str(pipe.get(slot) or "").strip()
+            if not pid:
+                return None
+            # `log` so a provider can say what it is doing — downloading a
+            # voice, loading a model — in the activity log rather than only on a
+            # console the user may not be watching.
+            cfg = dict(get_provider_config(pid))
+            cfg["log"] = self.ui.write_log
+            return registry.build(pid, cfg)
+
+        engine = PipelineEngine(part("llm"), part("stt"), part("tts"),
+                                config=config, log=self.ui.write_log)
+        # Without push-to-talk nothing else knows when a sentence ended, so the
+        # engine finds it in the audio. With push-to-talk the key release is the
+        # signal and the detector stays out of the way.
+        engine.auto_turn = not getattr(self, "_ptt_enabled", False)
+        self._engine = engine
+        try:
+            yield engine
+        finally:
+            self._engine = None
+            await engine.close()
 
     def _build_config(self) -> types.LiveConnectConfig:
         from datetime import datetime
@@ -3500,18 +3624,21 @@ class JarvisLive:
                     print("[JARVIS] Connecting...")
                     self.ui.set_state("THINKING")
                     _resumed_with = self._resume_handle is not None
+
+                    # Decided BEFORE the config is built, because the tool
+                    # declarations depend on what the engine can serve. On a
+                    # default install this returns None in a few microseconds
+                    # and nothing below behaves any differently.
+                    self._engine_caps = self._resolve_engine_caps()
                     config = self._build_config()
 
-                    # Fresh client on every reconnect — avoids stale HTTP session state
-                    # v1alpha carries the enhanced audio features (affective dialog,
-                    # proactive audio); if they get rejected we fall back to v1beta.
-                    client = genai.Client(
-                        api_key=_get_api_key(),
-                        http_options={"api_version": "v1alpha" if self._enhanced_live else "v1beta"}
-                    )
-
+                    # The conversation itself. `_open_session` gives back a
+                    # Gemini Live session or a local pipeline wearing the same
+                    # interface — the Live branch still builds a fresh client on
+                    # every reconnect to avoid stale HTTP state, and still asks
+                    # for v1alpha when proactive audio is on.
                     async with (
-                        client.aio.live.connect(model=LIVE_MODEL, config=config) as session,
+                        self._open_session(LIVE_MODEL, config) as session,
                         asyncio.TaskGroup() as tg,
                     ):
                         self.session          = session
