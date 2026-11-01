@@ -9,21 +9,21 @@ import re
 from pathlib import Path
 
 # header/footer/content live in the central area; the DOCKS are movable, closable and floatable.
-DOCKS = ("controls", "activity_log", "input")
-PANELS = ("header", "controls", "activity_log", "input", "content", "footer")
+# JARVIS VII: the SYS MONITOR ("controls") and ACTIVITY LOG docks were removed
+# permanently (the HTML HUD already provides them). Only the INPUT dock remains.
+# The "content" (news) panel stays in PANELS (other modules call show_content)
+# but is hidden in every workspace.
+DOCKS = ("input",)
+PANELS = ("header", "input", "content", "footer")
 
 # Names the previous layout (and natural speech) used: one name can cover several panels.
-ALIASES: dict[str, tuple[str, ...]] = {
-    "left": ("controls",),
-    "right": ("activity_log", "input"),
-    "log": ("activity_log",),
-}
+ALIASES: dict[str, tuple[str, ...]] = {}
 
 WORKSPACES: dict[str, dict[str, bool]] = {
-    "full":   {"header": True,  "controls": True,  "activity_log": True,  "input": True,  "content": True, "footer": True},
-    "focus":  {"header": True,  "controls": False, "activity_log": False, "input": False, "content": True, "footer": True},
-    "coding": {"header": True,  "controls": False, "activity_log": True,  "input": True,  "content": True, "footer": False},
-    "recon":  {"header": False, "controls": False, "activity_log": False, "input": False, "content": True, "footer": False},
+    "full":   {"header": True,  "input": True,  "content": False, "footer": True},
+    "focus":  {"header": True,  "input": False, "content": False, "footer": True},
+    "coding": {"header": True,  "input": True,  "content": False, "footer": False},
+    "recon":  {"header": False, "input": False, "content": False, "footer": False},
 }
 
 LAYOUT_VERSION = 1

@@ -1236,6 +1236,21 @@ class HudGauge(QWidget):
         p.end()
 
 
+class _NullLog:
+    """No-op stand-in for the removed ACTIVITY LOG dock.
+
+    JARVIS VII removed the SYS MONITOR and ACTIVITY LOG panels (the HTML HUD
+    already provides them). Dozens of call sites still do `self._log.append_log(...)`;
+    this object absorbs those calls so they don't crash. It keeps no state and
+    renders nothing.
+    """
+    def __init__(self):
+        self._ai_name_lc = "jarvis"
+
+    def append_log(self, text: str):  # noqa: D401
+        pass
+
+
 class LogWidget(QTextEdit):
     _sig = pyqtSignal(str)
 
@@ -3312,6 +3327,8 @@ class MainWindow(QMainWindow):
         root.addLayout(body, stretch=1)
         self._footer_panel = self._build_footer()
         root.addWidget(self._footer_panel)
+        # ACTIVITY LOG dock removed: absorb append_log calls with a no-op.
+        self._log = _NullLog()
         self._build_docks()
 
         # Quick-access drawer (floating overlay, built after central widget layout is done)
@@ -3325,11 +3342,7 @@ class MainWindow(QMainWindow):
         self._clock_tmr.start(1000)
         self._tick_clock()
 
-        # Metrik güncelleme timer'ı
-        self._metric_tmr = QTimer(self)
-        self._metric_tmr.timeout.connect(self._update_metrics)
-        self._metric_tmr.start(2000)
-        self._update_metrics()
+        # SYS MONITOR dock removed: no metrics timer.
         self._generation_tmr = QTimer(self)
         self._generation_tmr.timeout.connect(self._tick_generation_status)
 
@@ -3413,9 +3426,9 @@ class MainWindow(QMainWindow):
         self._layout_timer.start(5000)
 
     # --- Dock layout ---------------------------------------------------------
+    # JARVIS VII: only the INPUT dock remains. SYS MONITOR and ACTIVITY LOG were
+    # removed permanently (the HTML HUD already provides them).
     _DOCK_TITLES = {
-        "controls": "◈ SYS MONITOR",
-        "activity_log": "▸ ACTIVITY LOG",
         "input": "▸ INPUT",
     }
     _pre_focus = None
@@ -3428,8 +3441,6 @@ class MainWindow(QMainWindow):
             | QMainWindow.DockOption.AllowTabbedDocks
         )
         panels = {
-            "controls": (self._build_left_panel(), Qt.DockWidgetArea.LeftDockWidgetArea),
-            "activity_log": (self._build_log_panel(), Qt.DockWidgetArea.RightDockWidgetArea),
             "input": (self._build_input_panel(), Qt.DockWidgetArea.RightDockWidgetArea),
         }
         self._docks: dict[str, HudDock] = {}
@@ -3442,15 +3453,7 @@ class MainWindow(QMainWindow):
             )
             self.addDockWidget(area, dock)
             self._docks[name] = dock
-        self.resizeDocks([self._docks["controls"]], [_LEFT_W], Qt.Orientation.Horizontal)
-        self.resizeDocks(
-            [self._docks["activity_log"], self._docks["input"]], [_RIGHT_W, _RIGHT_W],
-            Qt.Orientation.Horizontal,
-        )
-        self.resizeDocks(
-            [self._docks["activity_log"], self._docks["input"]], [520, 300],
-            Qt.Orientation.Vertical,
-        )
+        self.resizeDocks([self._docks["input"]], [_RIGHT_W], Qt.Orientation.Horizontal)
         self._default_state = self.saveState(LAYOUT_VERSION)
         self._header_panel.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._header_panel.customContextMenuRequested.connect(
@@ -4982,88 +4985,13 @@ class MainWindow(QMainWindow):
             self._position_quick_drawer()
 
     def _update_metrics(self):
+        # SYS MONITOR / ACTIVITY LOG docks removed: only the central HUD still
+        # consumes CPU/GPU for its meters. No per-bar/uptime/proc widgets remain.
         snap = _metrics.snapshot()
-
-        # CPU
-        cpu = snap["cpu"]
-        self._bar_cpu.set_value(cpu, f"{cpu:.0f}%")
-
-        # MEM
-        mem = snap["mem"]
-        self._bar_mem.set_value(mem, f"{mem:.0f}%")
-
-        # NET
-        net = snap["net"]
-        if net < 1.0:
-            net_str = f"{net*1024:.0f}KB/s"
-        else:
-            net_str = f"{net:.1f}MB/s"
-        net_pct = min(100, net * 10)  # 10 MB/s = %100
-        self._bar_net.set_value(net_pct, net_str)
-
-        # GPU
-        gpu = snap["gpu"]
-        if gpu >= 0:
-            self._bar_gpu.set_value(gpu, f"{gpu:.0f}%")
-        else:
-            self._bar_gpu.set_value(0, "N/A")
-
-        # TMP
-        tmp = snap["tmp"]
-        if tmp >= 0:
-            tmp_pct = min(100, (tmp / 100) * 100)
-            self._bar_tmp.set_value(tmp_pct, f"{tmp:.0f}°C")
-        else:
-            self._bar_tmp.set_value(0, "N/A")
-        self.hud.set_system_metrics(cpu, gpu)
-
-        self._update_hud_runtime()
-
         try:
-            boot_t  = psutil.boot_time()
-            elapsed = time.time() - boot_t
-            h = int(elapsed // 3600)
-            m = int((elapsed % 3600) // 60)
-            self._uptime_lbl.setText(f"UP  {h:02d}:{m:02d}")
+            self.hud.set_system_metrics(snap["cpu"], snap["gpu"])
         except Exception:
-            self._uptime_lbl.setText("UP  --:--")
-
-        try:
-            proc_count = len(psutil.pids())
-            self._proc_lbl.setText(f"PROC  {proc_count}")
-        except Exception:
-            self._proc_lbl.setText("PROC  --")
-
-    def _update_hud_runtime(self) -> None:
-        if not callable(self.get_hud_runtime):
-            snapshot = {
-                "skills": {"active": 0, "total": 0},
-                "task": {"status": "idle", "completed": 0, "total": 0, "progress": 0},
-            }
-        else:
-            snapshot = self.get_hud_runtime()
-
-        skills = snapshot["skills"]
-        skill_total = int(skills["total"])
-        skill_active = int(skills["active"])
-        skill_pct = 100 * skill_active / skill_total if skill_total else 0
-        self._gauge_skills.set_value(
-            skill_pct,
-            f"{skill_active}/{skill_total}" if skill_total else "N/A",
-        )
-
-        task = snapshot["task"]
-        task_total = int(task["total"])
-        task_done = int(task["completed"])
-        task_pct = int(task["progress"])
-        task_status = str(task["status"]).upper().replace("_", " ")
-        task_reading = f"{task_done}/{task_total}" if task_total else task_status[:8]
-        self._gauge_task.set_value(task_pct, task_reading)
-        self._gauge_load.set_value(0, "N/A")
-        self._task_runner_progress.setValue(task_pct)
-        self._task_runner_label.setText(
-            f"TASK RUNNER: {task_pct}% - {task_status}"
-        )
+            pass
 
     def _build_header(self) -> QWidget:
         w = QWidget()
@@ -5153,133 +5081,6 @@ class MainWindow(QMainWindow):
     def _tick_clock(self):
         self._clock_lbl.setText(time.strftime("%H:%M:%S"))
         self._date_lbl.setText(time.strftime("%a %d %b %Y"))
-
-    def _build_left_panel(self) -> QWidget:
-        w = QWidget()
-        w.setMinimumWidth(_LEFT_W)
-        w.setStyleSheet(f"background: {C.DARK};")
-        lay = QVBoxLayout(w)
-        lay.setContentsMargins(8, 10, 8, 10)
-        lay.setSpacing(6)
-
-        hdr = QLabel("◈ SYS MONITOR")
-        hdr.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
-        hdr.setStyleSheet(f"color: {C.PRI}; background: transparent; "
-                          f"border-bottom: 1px solid {C.BORDER}; padding-bottom: 4px;")
-        lay.addWidget(hdr)
-
-        function_hint = QLabel("FUNCTION: Plugin Status & System Metrics")
-        function_hint.setWordWrap(True)
-        function_hint.setFont(QFont("Courier New", 6))
-        function_hint.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
-        lay.addWidget(function_hint)
-
-        for names in (("VOICE", "LOGIC", "DATA"), ("SEARCH", "VISION")):
-            icon_row = QHBoxLayout()
-            icon_row.setSpacing(3)
-            for name in names:
-                icon = QLabel(name)
-                icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                icon.setFont(QFont("Courier New", 6, QFont.Weight.Bold))
-                icon.setStyleSheet(
-                    f"color: {C.TEXT_MED}; background: {C.PANEL2};"
-                    f"border: 1px solid {C.BORDER}; padding: 3px 2px;"
-                )
-                icon_row.addWidget(icon, stretch=1)
-            lay.addLayout(icon_row)
-        lay.addSpacing(2)
-
-        self._bar_cpu = MetricBar("CPU", C.PRI)
-        self._bar_mem = MetricBar("MEM", C.ACC2)
-        self._bar_net = MetricBar("NET", C.GREEN)
-        self._bar_gpu = MetricBar("GPU", C.ACC)
-        self._bar_tmp = MetricBar("TMP", "#ff6688")
-
-        for bar in [self._bar_cpu, self._bar_mem, self._bar_net,
-                    self._bar_gpu, self._bar_tmp]:
-            lay.addWidget(bar)
-
-        lay.addSpacing(4)
-
-        info_panel = QWidget()
-        info_panel.setStyleSheet(
-            f"background: {C.PANEL2}; border: 1px solid {C.BORDER}; border-radius: 4px;"
-        )
-        ip_lay = QVBoxLayout(info_panel)
-        ip_lay.setContentsMargins(6, 5, 6, 5)
-        ip_lay.setSpacing(3)
-
-        self._uptime_lbl = QLabel("UP  --:--")
-        self._uptime_lbl.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
-        self._uptime_lbl.setStyleSheet(f"color: {C.GREEN}; background: transparent; border: none;")
-        ip_lay.addWidget(self._uptime_lbl)
-
-        self._proc_lbl = QLabel("PROC  --")
-        self._proc_lbl.setFont(QFont("Courier New", 8))
-        self._proc_lbl.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent; border: none;")
-        ip_lay.addWidget(self._proc_lbl)
-
-        os_name = {"Windows": "WIN", "Darwin": "macOS", "Linux": "LINUX"}.get(_OS, _OS.upper())
-        os_lbl = QLabel(f"OS  {os_name}")
-        os_lbl.setFont(QFont("Courier New", 8))
-        os_lbl.setStyleSheet(f"color: {C.ACC2}; background: transparent; border: none;")
-        ip_lay.addWidget(os_lbl)
-
-        lay.addWidget(info_panel)
-        lay.addSpacing(4)
-
-        lay.addStretch()
-
-        for txt, col in [
-            ("AI CORE\nACTIVE",  C.GREEN),
-            ("SEC\nCLEARED",     C.PRI),
-            ("PROTOCOL\nXLIX",   C.TEXT_DIM),
-        ]:
-            lbl = QLabel(txt)
-            lbl.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
-            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lbl.setStyleSheet(
-                f"color: {col}; background: {C.PANEL2};"
-                f"border: 1px solid {C.BORDER_A}; border-radius: 3px; padding: 4px;"
-            )
-            if col != C.TEXT_DIM:
-                start_pulsing_glow(lbl, col, reduced_motion=self._reduced_motion)
-            lay.addWidget(lbl)
-
-        return w
-    def _build_log_panel(self) -> QWidget:
-        w = QWidget()
-        w.setMinimumWidth(_LEFT_W)
-        w.setStyleSheet(f"background: {C.DARK};")
-        lay = QVBoxLayout(w)
-        lay.setContentsMargins(8, 8, 8, 8)
-        lay.setSpacing(6)
-
-        callout = QLabel("FUNCTION: Task Execution & Cognitive Load")
-        callout.setWordWrap(True)
-        callout.setFont(QFont("Courier New", 6, QFont.Weight.Bold))
-        callout.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
-        lay.addWidget(callout)
-
-        gauge_row = QHBoxLayout()
-        gauge_row.setSpacing(2)
-        self._gauge_skills = HudGauge("SKILLS", C.PRI)
-        self._gauge_task = HudGauge("TASK", C.ACC)
-        self._gauge_load = HudGauge("LOAD", C.ACC2)
-        for gauge in (self._gauge_skills, self._gauge_task, self._gauge_load):
-            gauge_row.addWidget(gauge)
-        gauge_row.addStretch(1)
-        lay.addLayout(gauge_row)
-
-        load_note = QLabel("Cognitive-load telemetry: N/A")
-        load_note.setFont(QFont("Courier New", 6))
-        load_note.setStyleSheet(f"color: {C.TEXT_DIM}; background: transparent;")
-        lay.addWidget(load_note)
-
-        self._log = LogWidget()
-        self._log.setPlaceholderText("[JARVIS]: Ready, waiting for command")
-        lay.addWidget(self._log, stretch=1)
-        return w
 
     def _build_input_panel(self) -> QWidget:
         w = QWidget()

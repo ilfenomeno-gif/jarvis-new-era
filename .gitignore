@@ -2,6 +2,8 @@
 config/api_keys.json
 config/voice_settings.json
 config/n8n.json
+config/secrets.json
+config/ui_layout.json
 config/certs/
 *.pem
 *.key
