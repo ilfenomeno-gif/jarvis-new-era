@@ -1,0 +1,15 @@
+{
+  "id": "google-workspace",
+  "name": "Google Workspace",
+  "type": "remote-mcp",
+  "transport": "streamable-http",
+  "auth": "oauth2",
+  "scopes": ["gmail.read", "gmail.send", "calendar.read", "calendar.write", "drive.read"],
+  "tool_refs": {
+    "gmail.search": "gmail.read",
+    "gmail.send": "gmail.send",
+    "calendar.list_events": "calendar.read",
+    "calendar.create": "calendar.write",
+    "drive.list_recent": "drive.read"
+  }
+}

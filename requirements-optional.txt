@@ -1,0 +1,7 @@
+# Dipendenze opzionali: non servono per l'uso base.
+# Dettatura offline (Whisper su CTranslate2). Il modello va scaricato una volta
+# con rete, oppure messo in cache prima dell'uso offline.
+faster-whisper>=1.0,<2
+# Generazione 3D da testo (tool generate_3d_model, Tripo apiv3). Serve anche una chiave API:
+# python -m core.registry_cli set-tripo-key
+tripo3d>=1.0.0,<2.0.0

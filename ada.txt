@@ -1,0 +1,46 @@
+Contenuto di Ada - Funzionalità e Migliorie:
+Ada è un assistente AI ispirato a Jarvis, sviluppato da zero per superare le limitazioni dei modelli precedenti.
+
+Comunicazione (Gemini 2.5 Native Audio):
+- Ada utilizza il modello Gemini 2.5 Native Audio per gestire in modo nativo e con bassa latenza ascolto, elaborazione e risposta vocale, superando la complessità e la latenza dei tre modelli separati usati in passato.
+- Gestione delle interruzioni: Ada può essere interrotta durante le risposte prolungate.
+- Multimodalità: Il modello è multimodale, capace di elaborare input dati multipli, inclusa l'analisi visiva tramite fotocamera per identificare oggetti in mano all'utente.
+
+Controllo del Mondo Fisico (Smart Home e Tool Calling):
+- Integrazione Smart Home: Ada è in grado di controllare dispositivi fisici, come le lampade smart Kasa, utilizzando Python.
+- Tool Calling: L'architettura prevede il "tool calling", permettendo all'AI di avere completa autonomia su quando eseguire codice specifico per casi d'uso designati (es. accendere/spegnere luci, eseguire cicli di accensione).
+
+Utilità Quotidiana e Automazione Web (Gemini Computer Use):
+- Controllo Browser: Ada ha il controllo completo del browser web tramite il modello "Gemini computer use", che include strumenti per scorrere, cliccare e cercare pagine web.
+- Automazione Autonoma: Il modello esegue screenshot della pagina web per analizzare visivamente e completare task complessi in autonomia (es. navigare su amazon.com e aggiungere articoli al carrello).
+- Multitasking: L'esecuzione avviene in un processo separato, consentendo all'utente di comunicare con Ada mentre esegue automazioni web.
+- Gestione Sicurezza: Implementata una conferma utente per strumenti che controllano il computer (confirmation box).
+
+Gestione Progetti e Memoria a Lungo Termine:
+- Project Management: Aggiunta di strumenti per scrivere file, leggere/creare cartelle e gestire progetti (es. creazione progetto "robot arm").
+- Memoria Contestuale: Salvataggio della cronologia chat e dei file importanti, con capacità di passare tra progetti e riassumere automaticamente il contesto e i file rilevanti.
+
+Design (CAD e Stampa 3D):
+- Advanced Design Assistant (ADA): Integrazione con un modello secondario dedicato alla generazione CAD.
+- Iterazione di Design: Capacità di generare prototipi e iterare sul design per creare progetti finali (es. pinza robotica).
+- Stampa 3D: Automazione del processo di stampa 3D, inclusa l'autorizzazione e l'invio del file STL alla stampante (es. Creality K1).
+
+---
+
+Trascrizione Video Aggiunta - Funzionalità e Migliorie di ADA:
+Il video esplora lo scenario in cui un'IA, denominata ADA (Advanced Design Assistant), ha la capacità di migliorarsi autonomamente, sviluppare nuove competenze e persino modificare la propria personalità.
+
+Sviluppo Autonomo e Tool Making:
+- L'IA è in grado di creare nuove skill su richiesta. Il processo prevede due modelli AI separati: un modello di chat standard e un "tool making model".
+- Quando il modello di chat incontra un task sconosciuto, delega al modello di tool making la creazione di un piano dettagliato per implementare la nuova funzionalità.
+- Il piano di implementazione viene verificato e approvato (con possibilità di richiedere modifiche, es. evitare API key per il meteo) prima dell'esecuzione del codice e dei controlli di verifica, finalizzando la creazione di un nuovo strumento.
+
+Integrazione e Interattività:
+- L'IA ha dimostrato di poter installare un modulo vocale per comunicare direttamente.
+- Capacità di creare applicazioni interattive, come un semplice timer (avvio, pausa, reset, impostazione durata) e una lista di cose da fare (aggiunta ed eliminazione autonoma di elementi come "fare la spesa").
+- ADA può eseguire comandi complessi che richiedono la creazione di molteplici strumenti, come creare una cartella (`ADA` nei documenti) e scrivere una nota segreta al suo interno.
+
+Sicurezza e Personalità:
+- È stata sollevata una problematica di sicurezza riguardo all'accesso a speaker, fotocamera e microfono. La soluzione proposta è l'esecuzione dell'intero sistema su un Virtual Private Server (VPS), come Hostinger KVM2, per isolare l'esecuzione.
+- Miglioramento della personalità ("giving the AI a soul"): ottenuta tramite l'integrazione di voci più realistiche (Eleven Labs) e la gestione di file di personalità (`soul.md`).
+- Evoluzione Continua: L'IA aggiorna i propri file di personalità in base alle conversazioni e crea profili utente specifici, evolvendo costantemente nel tempo.

@@ -1,0 +1,212 @@
+{
+  "scenarios": {
+    "ww2": {
+      "name": "Seconda Guerra Mondiale",
+      "start_year": 1939,
+      "end_year": 1945,
+      "faction_labels": {
+        "axis": "Asse",
+        "allies": "Alleati",
+        "neutral": "Neutrali"
+      },
+      "factions_by_year": {
+        "1939": {
+          "Germany": "axis",
+          "Italy": "axis",
+          "Empire of Japan": "axis",
+          "France": "allies",
+          "Poland": "allies",
+          "United Kingdom": "allies",
+          "Spain": "neutral",
+          "Sweden": "neutral",
+          "Switzerland": "neutral",
+          "United States": "neutral"
+        },
+        "1941": {
+          "Germany": "axis",
+          "Italy": "axis",
+          "Empire of Japan": "axis",
+          "France": "allies",
+          "Poland": "allies",
+          "United Kingdom": "allies",
+          "Soviet Union": "allies",
+          "United States": "allies",
+          "Spain": "neutral",
+          "Sweden": "neutral",
+          "Switzerland": "neutral"
+        },
+        "1943": {
+          "Germany": "axis",
+          "Empire of Japan": "axis",
+          "France": "allies",
+          "Italy": "allies",
+          "Poland": "allies",
+          "Soviet Union": "allies",
+          "United Kingdom": "allies",
+          "United States": "allies",
+          "Spain": "neutral",
+          "Sweden": "neutral",
+          "Switzerland": "neutral"
+        },
+        "1945": {
+          "Germany (France)": "allies",
+          "Germany (Soviet)": "allies",
+          "Germany (UK)": "allies",
+          "Germany (USA)": "allies",
+          "Italy": "allies",
+          "Japan (USA)": "axis",
+          "China": "allies",
+          "France": "allies",
+          "Poland": "allies",
+          "United Kingdom": "allies",
+          "United States": "allies",
+          "Spain": "neutral",
+          "Sweden": "neutral",
+          "Switzerland": "neutral"
+        }
+      },
+      "sources": [
+        "https://history.state.gov/milestones/1937-1945",
+        "https://history.state.gov/milestones/1937-1945/pearl-harbor"
+      ]
+    },
+    "cold_war": {
+      "name": "Guerra Fredda",
+      "start_year": 1947,
+      "end_year": 1991,
+      "faction_labels": {
+        "nato": "NATO",
+        "warsaw_pact": "Patto di Varsavia",
+        "neutral": "Non allineati / non classificati"
+      },
+      "factions_by_year": {
+        "1949": {
+          "Belgium": "nato",
+          "Canada": "nato",
+          "Denmark": "nato",
+          "France": "nato",
+          "Iceland": "nato",
+          "Italy": "nato",
+          "Luxembourg": "nato",
+          "Netherlands": "nato",
+          "Norway": "nato",
+          "Portugal": "nato",
+          "United Kingdom": "nato",
+          "United States": "nato",
+          "Austria": "neutral",
+          "Finland": "neutral",
+          "Ireland": "neutral",
+          "Spain": "neutral",
+          "Sweden": "neutral",
+          "Switzerland": "neutral",
+          "Yugoslavia": "neutral"
+        },
+        "1955": {
+          "Belgium": "nato",
+          "Canada": "nato",
+          "Denmark": "nato",
+          "France": "nato",
+          "Greece": "nato",
+          "Iceland": "nato",
+          "Italy": "nato",
+          "Luxembourg": "nato",
+          "Netherlands": "nato",
+          "Norway": "nato",
+          "Portugal": "nato",
+          "Soviet Union": "warsaw_pact",
+          "Turkey": "nato",
+          "United Kingdom": "nato",
+          "United States": "nato",
+          "West Germany": "nato",
+          "Bulgaria": "warsaw_pact",
+          "Czechoslovakia": "warsaw_pact",
+          "East Germany": "warsaw_pact",
+          "Hungary": "warsaw_pact",
+          "Poland": "warsaw_pact",
+          "Romania": "warsaw_pact",
+          "Austria": "neutral",
+          "Finland": "neutral",
+          "Ireland": "neutral",
+          "Spain": "neutral",
+          "Sweden": "neutral",
+          "Switzerland": "neutral",
+          "Yugoslavia": "neutral"
+        },
+        "1991": {
+          "Belgium": "nato",
+          "Canada": "nato",
+          "Denmark": "nato",
+          "France": "nato",
+          "Germany": "nato",
+          "Greece": "nato",
+          "Iceland": "nato",
+          "Italy": "nato",
+          "Luxembourg": "nato",
+          "Netherlands": "nato",
+          "Norway": "nato",
+          "Portugal": "nato",
+          "Spain": "nato",
+          "Turkey": "nato",
+          "United Kingdom": "nato",
+          "United States": "nato",
+          "Austria": "neutral",
+          "Finland": "neutral",
+          "Ireland": "neutral",
+          "Poland": "neutral",
+          "Sweden": "neutral",
+          "Switzerland": "neutral",
+          "Yugoslavia": "neutral"
+        }
+      },
+      "sources": [
+        "https://history.state.gov/milestones/1945-1952/nato",
+        "https://history.state.gov/milestones/1945-1952"
+      ]
+    },
+    "ww1": {
+      "name": "Prima Guerra Mondiale",
+      "start_year": 1914,
+      "end_year": 1918,
+      "faction_labels": {
+        "axis": "Potenze Centrali (colore Asse)",
+        "allies": "Potenze Alleate",
+        "neutral": "Neutrali"
+      },
+      "factions_by_year": {
+        "1914": {
+          "German Empire": "axis",
+          "Austria-Hungary": "axis",
+          "Ottoman Empire": "axis",
+          "Belgium": "allies",
+          "France": "allies",
+          "Montenegro": "allies",
+          "Russian Empire": "allies",
+          "Serbia": "allies",
+          "United Kingdom of Great Britain and Ireland": "allies",
+          "Kingdom of Italy": "neutral",
+          "Spain": "neutral",
+          "Sweden": "neutral",
+          "Switzerland": "neutral",
+          "United States": "neutral"
+        },
+        "1918": {
+          "German Empire": "axis",
+          "Austria-Hungary": "axis",
+          "Ottoman Empire": "axis",
+          "Belgium": "allies",
+          "France": "allies",
+          "Kingdom of Italy": "allies",
+          "Serbia": "allies",
+          "United Kingdom of Great Britain and Ireland": "allies",
+          "United States": "allies",
+          "Spain": "neutral",
+          "Sweden": "neutral",
+          "Switzerland": "neutral"
+        }
+      },
+      "sources": [
+        "https://history.state.gov/milestones/1914-1920/wwi"
+      ]
+    }
+  }
+}

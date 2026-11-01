@@ -1,0 +1,1 @@
+Use contextual planning and verify constraints before acting. Distinguish games/apps from local files, prefer the correct launcher, and ask formally when ambiguous. Do not expose hidden chain-of-thought.

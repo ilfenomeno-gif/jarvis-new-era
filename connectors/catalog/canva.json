@@ -1,0 +1,12 @@
+{
+  "id": "canva",
+  "name": "Canva",
+  "type": "remote-mcp",
+  "transport": "streamable-http",
+  "auth": "oauth2",
+  "scopes": ["design.read", "design.write"],
+  "tool_refs": {
+    "canva.search_designs": "design.read",
+    "canva.create_design": "design.write"
+  }
+}

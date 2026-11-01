@@ -1,0 +1,47 @@
+PyQt6==6.11.0
+PyQt6-WebEngine==6.11.0
+sounddevice
+google-genai>=2.8.0
+google-generativeai
+pillow
+requests
+httpx
+beautifulsoup4
+ddgs>=9.0.0
+playwright
+pyautogui
+pyperclip
+pygetwindow
+opencv-python
+numpy
+mss
+pytesseract
+psutil
+send2trash
+youtube-transcript-api
+python-pptx
+fastapi
+uvicorn[standard]
+cryptography
+python-multipart
+comtypes; sys_platform == "win32"
+pycaw; sys_platform == "win32"
+win10toast; sys_platform == "win32"
+pywinauto; sys_platform == "win32"
+pywin32; sys_platform == "win32"
+qrcode[pil]
+pyttsx3
+keyboard; sys_platform == "win32"
+opencv-python
+numpy
+python-kasa
+websockets>=14.0
+
+# Writing Assistant Plugin Dependencies
+openai
+python-docx
+pdfplumber
+
+# Testing
+pytest
+pytest-mock

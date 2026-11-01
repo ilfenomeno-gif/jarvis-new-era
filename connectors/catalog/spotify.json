@@ -1,0 +1,12 @@
+{
+  "id": "spotify",
+  "name": "Spotify",
+  "type": "local-mcp",
+  "transport": "stdio",
+  "auth": "oauth2",
+  "scopes": ["playback.read", "playback.control"],
+  "tool_refs": {
+    "spotify.currently_playing": "playback.read",
+    "spotify.play": "playback.control"
+  }
+}

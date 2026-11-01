@@ -1,0 +1,12 @@
+{
+  "id": "higgsfield",
+  "name": "Higgsfield",
+  "type": "remote-mcp",
+  "transport": "streamable-http",
+  "auth": "oauth2",
+  "endpoint": "https://mcp.higgsfield.ai/mcp",
+  "scopes": ["media.generate"],
+  "tool_refs": {
+    "higgsfield.generate": "media.generate"
+  }
+}

@@ -1,0 +1,34 @@
+# Generazione 3D locale da testo (core/local_3d_gen.py): SD-Turbo -> TripoSR, solo GPU.
+# Pesante: ~3 GB di torch + ~5 GB di modelli al primo uso. Serve una GPU NVIDIA con >= 6 GB di VRAM.
+#
+# Installazione (dalla cartella Mark-LIV-main, nel venv di JARVIS):
+#   1. pip install torch --index-url https://download.pytorch.org/whl/cu128   # build CUDA, non quella CPU
+#   2. pip install -r requirements-3d.txt
+#   3. python -m core.local_3d_gen setup      # clona TripoSR (MIT) in third_party/
+#   4. python -m core.local_3d_gen            # verifica GPU e dipendenze
+#   5. python -m core.registry_cli set-3d-backend local    # oppure "auto"
+#
+# torchmcubes (richiesto da TripoSR) non ha wheel per Windows: il worker usa scikit-image.
+# transformers<5: il checkpoint TripoSR usa i nomi dei layer ViT della 4.x (con la 5.x il caricamento fallisce);
+# da qui i limiti su diffusers/huggingface-hub (pip check pulito).
+diffusers>=0.30,<0.36
+transformers>=4.40,<5
+accelerate>=0.30
+rembg[cpu]>=2.0
+trimesh>=4.0
+omegaconf>=2.3
+einops>=0.7
+huggingface-hub>=0.23,<1
+scikit-image>=0.22
+
+# --- Stable Fast 3D (opzionale, backend predefinito: JARVIS_3D_BACKEND=sf3d|triposr) ---
+# UV + texture PBR vere. Se manca o fallisce, il worker ripiega da solo su TripoSR.
+#   1. python -m core.local_3d_gen setup     # clona anche third_party/stable-fast-3d
+#   2. pip install jaxtyping open_clip_torch pynanoinstantmeshes gpytoolbox
+#      (NON usare requirements.txt di SF3D: fissa numpy/transformers/torch e romperebbe il venv)
+#   3. Estensioni, da "x64 Native Tools Command Prompt" (MSVC Build Tools 2022, carico "Sviluppo desktop con C++"):
+#        set USE_NATIVE_ARCH=0 && set USE_CUDA=0 && set DISTUTILS_USE_SDK=1
+#        pip install --no-build-isolation third_party\stable-fast-3d\texture_baker third_party\stable-fast-3d\uv_unwrapper
+#      Senza CUDA Toolkit (nvcc) le estensioni sono compilate in C++ su CPU: funziona, non serve il Toolkit.
+#   4. Modello gated: accettare la licenza su https://huggingface.co/stabilityai/stable-fast-3d e fare
+#      "huggingface-cli login" (oppure impostare HF_TOKEN).

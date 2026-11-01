@@ -1,0 +1,10 @@
+{
+  "default_duration": 0.3,
+  "transitions": {
+    "listening->thinking": 0.3,
+    "thinking->speaking": 0.2,
+    "speaking->listening": 0.25,
+    "generating_3d->listening": 0.35,
+    "error->listening": 0.4
+  }
+}

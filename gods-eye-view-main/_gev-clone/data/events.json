@@ -1,0 +1,124 @@
+{
+  "events": [
+    {
+      "id": "ww1-first-marne",
+      "name": "Prima battaglia della Marna",
+      "year": 1914,
+      "month": 9,
+      "day": 6,
+      "lat": 49,
+      "lon": 3,
+      "type": "battle",
+      "belligerents": ["allies", "axis"],
+      "scenario": "ww1"
+    },
+    {
+      "id": "ww1-armistice",
+      "name": "Armistizio dell'11 novembre",
+      "year": 1918,
+      "month": 11,
+      "day": 11,
+      "lat": 49.42,
+      "lon": 2.83,
+      "type": "treaty",
+      "belligerents": ["allies", "axis"],
+      "scenario": "ww1"
+    },
+    {
+      "id": "ww2-pearl-harbor",
+      "name": "Attacco a Pearl Harbor",
+      "year": 1941,
+      "month": 12,
+      "day": 7,
+      "lat": 21.36,
+      "lon": -157.95,
+      "type": "battle",
+      "belligerents": ["axis", "allies"],
+      "scenario": "ww2"
+    },
+    {
+      "id": "ww2-stalingrad",
+      "name": "Inizio della battaglia di Stalingrado",
+      "year": 1942,
+      "month": 8,
+      "day": 23,
+      "lat": 48.71,
+      "lon": 44.51,
+      "type": "battle",
+      "belligerents": ["axis", "allies"],
+      "scenario": "ww2"
+    },
+    {
+      "id": "ww2-dday",
+      "name": "Sbarco in Normandia",
+      "year": 1944,
+      "month": 6,
+      "day": 6,
+      "lat": 49.34,
+      "lon": -0.85,
+      "type": "battle",
+      "belligerents": ["allies", "axis"],
+      "scenario": "ww2"
+    },
+    {
+      "id": "ww2-japan-surrender",
+      "name": "Firma della resa giapponese",
+      "year": 1945,
+      "month": 9,
+      "day": 2,
+      "lat": 35.36,
+      "lon": 139.76,
+      "type": "treaty",
+      "belligerents": ["allies", "axis"],
+      "scenario": "ww2"
+    },
+    {
+      "id": "cold-war-berlin-blockade",
+      "name": "Inizio del blocco di Berlino",
+      "year": 1948,
+      "month": 6,
+      "day": 24,
+      "lat": 52.52,
+      "lon": 13.405,
+      "type": "crisis",
+      "belligerents": ["nato", "warsaw_pact"],
+      "scenario": "cold_war"
+    },
+    {
+      "id": "cold-war-cuban-missile-crisis",
+      "name": "Inizio della crisi dei missili di Cuba",
+      "year": 1962,
+      "month": 10,
+      "day": 16,
+      "lat": 23.11,
+      "lon": -82.37,
+      "type": "crisis",
+      "belligerents": ["nato", "warsaw_pact"],
+      "scenario": "cold_war"
+    },
+    {
+      "id": "cold-war-berlin-wall",
+      "name": "Apertura del Muro di Berlino",
+      "year": 1989,
+      "month": 11,
+      "day": 9,
+      "lat": 52.52,
+      "lon": 13.405,
+      "type": "event",
+      "belligerents": ["nato", "warsaw_pact"],
+      "scenario": "cold_war"
+    },
+    {
+      "id": "cold-war-ussr-dissolution",
+      "name": "Dissoluzione dell'Unione Sovietica",
+      "year": 1991,
+      "month": 12,
+      "day": 26,
+      "lat": 55.7558,
+      "lon": 37.6173,
+      "type": "event",
+      "belligerents": ["nato", "warsaw_pact"],
+      "scenario": "cold_war"
+    }
+  ]
+}

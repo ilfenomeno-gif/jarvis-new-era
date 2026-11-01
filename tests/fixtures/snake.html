@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Jarvis fixture Snake 20x20</title>
+  <style>
+    body { font-family: sans-serif; margin: 1.5rem; }
+    canvas { border: 2px solid #333; display: block; max-width: 100%; }
+    #status, #position { min-height: 1.5em; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Snake locale 20x20</h1>
+    <p>Usa le frecce direzionali. Premi Restart dopo il game over.</p>
+    <canvas id="board" width="400" height="400" tabindex="0"
+            aria-label="Snake game board"></canvas>
+    <p id="position" aria-live="polite"></p>
+    <p id="status" aria-live="assertive">Gioco in corso</p>
+    <button id="restart" type="button">Restart</button>
+  </main>
+  <script>
+    "use strict";
+    const GRID_SIZE = 20;
+    const CELL_SIZE = 20;
+    const canvas = document.getElementById("board");
+    const context = canvas.getContext("2d");
+    const status = document.getElementById("status");
+    const position = document.getElementById("position");
+    let snake;
+    let direction;
+    let food;
+    let gameOver;
+    let score;
+
+    function placeFood() {
+      do {
+        food = {
+          x: Math.floor(Math.random() * GRID_SIZE),
+          y: Math.floor(Math.random() * GRID_SIZE)
+        };
+      } while (snake.some((part) => part.x === food.x && part.y === food.y));
+    }
+
+    function resetGame() {
+      snake = [{ x: 10, y: 10 }, { x: 9, y: 10 }, { x: 8, y: 10 }];
+      direction = { x: 1, y: 0 };
+      gameOver = false;
+      score = 0;
+      status.textContent = "Gioco in corso";
+      placeFood();
+      draw();
+      canvas.focus();
+    }
+
+    function draw() {
+      context.fillStyle = "#f5f5f5";
+      context.fillRect(0, 0, canvas.width, canvas.height);
+      context.strokeStyle = "#ddd";
+      for (let grid = 0; grid <= GRID_SIZE; grid += 1) {
+        const offset = grid * CELL_SIZE;
+        context.beginPath();
+        context.moveTo(offset, 0);
+        context.lineTo(offset, canvas.height);
+        context.moveTo(0, offset);
+        context.lineTo(canvas.width, offset);
+        context.stroke();
+      }
+      context.fillStyle = "#d22";
+      context.fillRect(food.x * CELL_SIZE, food.y * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+      context.fillStyle = "#17823b";
+      for (const part of snake) {
+        context.fillRect(part.x * CELL_SIZE, part.y * CELL_SIZE, CELL_SIZE, CELL_SIZE);
+      }
+      position.textContent =
+        `Testa: ${snake[0].x},${snake[0].y} — Punteggio: ${score}`;
+    }
+
+    function finishGame() {
+      gameOver = true;
+      status.textContent = "Game over — premi Restart";
+    }
+
+    function tick() {
+      if (gameOver) return;
+      const head = {
+        x: snake[0].x + direction.x,
+        y: snake[0].y + direction.y
+      };
+      const eating = head.x === food.x && head.y === food.y;
+      const collisionBody = eating ? snake : snake.slice(0, -1);
+      if (
+        head.x < 0 || head.x >= GRID_SIZE ||
+        head.y < 0 || head.y >= GRID_SIZE ||
+        collisionBody.some((part) => part.x === head.x && part.y === head.y)
+      ) {
+        finishGame();
+        return;
+      }
+      snake.unshift(head);
+      if (eating) {
+        score += 1;
+        placeFood();
+      } else {
+        snake.pop();
+      }
+      draw();
+    }
+
+    document.addEventListener("keydown", (event) => {
+      const turns = {
+        ArrowUp: { x: 0, y: -1 },
+        ArrowRight: { x: 1, y: 0 },
+        ArrowDown: { x: 0, y: 1 },
+        ArrowLeft: { x: -1, y: 0 }
+      };
+      const next = turns[event.key];
+      if (!next || gameOver) return;
+      event.preventDefault();
+      if (next.x !== -direction.x || next.y !== -direction.y) {
+        direction = next;
+      }
+    });
+    document.getElementById("restart").addEventListener("click", resetGame);
+    window.setInterval(tick, 140);
+    resetGame();
+  </script>
+</body>
+</html>

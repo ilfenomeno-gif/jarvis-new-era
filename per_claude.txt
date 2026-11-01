@@ -1,0 +1,2001 @@
+### FILE: core/local_3d_worker.py ###
+
+```python
+"""Heavy worker for local text-to-3D. Runs in its own process (see core/local_3d_gen.py).
+
+Stage 1: SD-Turbo makes a picture of the prompt. Stage 2: TripoSR reconstructs it as a
+mesh, saved as .glb. The models are loaded one after the other to fit in 8 GB of VRAM.
+The last stdout line is ``JARVIS_RESULT {json}``.
+"""
+from __future__ import annotations
+
+import argparse
+import gc
+import json
+import os
+import sys
+import tempfile
+import time
+from pathlib import Path
+
+RESULT_PREFIX = "JARVIS_RESULT "
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from core.prompt_3d import build_image_prompt  # noqa: E402
+
+TEXT2IMG_MODEL = os.environ.get("JARVIS_3D_TEXT2IMG", "stabilityai/sd-turbo")
+TRIPOSR_MODEL = os.environ.get("JARVIS_3D_TRIPOSR", "stabilityai/TripoSR")
+# (marching-cubes resolution, chunk size): retried smaller after an out-of-memory.
+# 192 is the default: 256 costs far more extraction time for little visible gain on a hologram.
+QUALITY_STEPS = [(192, 4096), (128, 2048)]
+
+
+def half_precision() -> bool:
+    return os.environ.get("JARVIS_3D_HALF", "1") != "0"
+
+
+def lap(stage: str, since: float) -> float:
+    now = time.perf_counter()
+    print("TIMING " + json.dumps({"stage": stage, "seconds": round(now - since, 2)}), flush=True)
+    return now
+
+
+def emit(payload: dict) -> None:
+    print(RESULT_PREFIX + json.dumps(payload), flush=True)
+
+
+def triposr_dir() -> Path:
+    return Path(os.environ.get("TRIPOSR_DIR") or Path(__file__).resolve().parent.parent / "third_party" / "TripoSR")
+
+
+def _missing_modules() -> list[str]:
+    import importlib.util
+    needed = ["diffusers", "transformers", "rembg", "trimesh", "omegaconf", "einops", "PIL", "huggingface_hub"]
+    missing = [name for name in needed if importlib.util.find_spec(name) is None]
+    if not (triposr_dir() / "tsr").is_dir():
+        missing.append("TripoSR sources (run: python -m core.local_3d_gen setup)")
+    return missing
+
+
+def probe() -> dict:
+    try:
+        import torch
+    except ImportError:
+        return {"torch": False, "cuda": False, "missing": ["torch"]}
+    info = {"torch": True, "torch_version": torch.__version__, "cuda": bool(torch.cuda.is_available()),
+            "missing": _missing_modules()}
+    if info["cuda"]:
+        props = torch.cuda.get_device_properties(0)
+        info.update(gpu=props.name, vram_gb=round(props.total_memory / 1024 ** 3, 2))
+    return info
+
+
+def _free(torch) -> None:
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
+def candidate_count() -> int:
+    try:
+        return max(1, min(6, int(os.environ.get("JARVIS_3D_CANDIDATES", "3"))))
+    except ValueError:
+        return 3
+
+
+def _text_to_images(prompt: str, torch, count: int) -> list:
+    from diffusers import AutoPipelineForText2Image
+    pipe = AutoPipelineForText2Image.from_pretrained(TEXT2IMG_MODEL, torch_dtype=torch.float16, variant="fp16")
+    pipe.to("cuda")
+    try:
+        images = []
+        for _ in range(count):
+            seed = int.from_bytes(os.urandom(4), "little")
+            generator = torch.Generator("cuda").manual_seed(seed)
+            # SD-Turbo is distilled for one step without guidance
+            images.append(pipe(prompt=prompt, num_inference_steps=2, guidance_scale=0.0,
+                               width=512, height=512, generator=generator).images[0])
+        return images
+    finally:
+        del pipe
+        _free(torch)
+
+
+def _install_marching_cubes_fallback() -> None:
+    """torchmcubes has no Windows wheel and must be compiled; use scikit-image instead.
+
+    torchmcubes returns vertices as (axis2, axis1, axis0) with inside = value < level;
+    skimage returns (axis0, axis1, axis2), so reverse the axes and the face winding.
+    """
+    try:
+        import torchmcubes  # noqa: F401
+        return
+    except ImportError:
+        pass
+    import types
+
+    import numpy as np
+    import torch
+    from skimage.measure import marching_cubes as sk_marching_cubes
+
+    def marching_cubes(vol, thresh):
+        volume = vol.detach().cpu().numpy().astype(np.float32)
+        verts, faces, _, _ = sk_marching_cubes(volume, level=float(thresh))
+        verts = np.ascontiguousarray(verts[:, ::-1])
+        faces = np.ascontiguousarray(faces[:, ::-1])
+        return torch.from_numpy(verts.copy()).float(), torch.from_numpy(faces.astype(np.int64))
+
+    module = types.ModuleType("torchmcubes")
+    module.marching_cubes = marching_cubes
+    sys.modules["torchmcubes"] = module
+
+
+def debug_dir() -> Path:
+    path = Path(os.environ.get("JARVIS_3D_DEBUG_DIR") or tempfile.gettempdir())
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def cutout_stats(alpha) -> dict:
+    """Coverage of the rembg mask: how much of the frame is object, and how crisp the edge is."""
+    import numpy as np
+    a = np.asarray(alpha).astype(np.float32) / 255.0
+    solid = float((a > 0.9).mean())
+    soft = float(((a > 0.1) & (a <= 0.9)).mean())
+    ys, xs = np.where(a > 0.5)
+    box = [int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())] if len(xs) else None
+    return {"object_ratio": round(float((a > 0.5).mean()), 3), "solid": round(solid, 3),
+            "soft_edge": round(soft, 3), "bbox": box}
+
+
+def _largest_component_share(mask) -> float:
+    """Share of the object pixels in its biggest 4-connected blob (numpy only, on a coarse grid)."""
+    step = max(1, min(mask.shape) // 64)
+    grid = mask[::step, ::step]
+    seen = ~grid
+    best = 0
+    for y, x in zip(*grid.nonzero()):
+        if seen[y, x]:
+            continue
+        seen[y, x] = True
+        stack, size = [(y, x)], 0
+        while stack:
+            cy, cx = stack.pop()
+            size += 1
+            for ny, nx in ((cy + 1, cx), (cy - 1, cx), (cy, cx + 1), (cy, cx - 1)):
+                if 0 <= ny < grid.shape[0] and 0 <= nx < grid.shape[1] and not seen[ny, nx]:
+                    seen[ny, nx] = True
+                    stack.append((ny, nx))
+        best = max(best, size)
+    return best / max(1, int(grid.sum()))
+
+
+def score_cutout(alpha) -> float:
+    """Heuristic 0..1: one dominant, centred, well-framed object scores high; blobs, crops and empty masks low."""
+    import numpy as np
+    mask = np.asarray(alpha) > 127
+    total = mask.size
+    ratio = float(mask.sum()) / total
+    if ratio < 0.05:
+        return 0.0
+    dominance = _largest_component_share(mask)
+    ys, xs = np.where(mask)
+    h, w = mask.shape
+    touches = int(xs.min() == 0) + int(ys.min() == 0) + int(xs.max() == w - 1) + int(ys.max() == h - 1)
+    cx, cy = (xs.mean() / w - 0.5), (ys.mean() / h - 0.5)
+    off_center = min(1.0, (cx * cx + cy * cy) ** 0.5 * 2)
+    size_fit = 1.0 - min(1.0, abs(ratio - 0.3) / 0.3)
+    return round(max(0.0, 0.4 * dominance + 0.3 * size_fit + 0.3 * (1 - off_center) - 0.25 * touches), 3)
+
+
+def _pick_cutout(images, session):
+    """rembg every candidate, return (index, best cutout, scores)."""
+    import numpy as np
+    from tsr.utils import remove_background
+    cuts = [remove_background(image, session) for image in images]
+    scores = [score_cutout(np.array(cut)[:, :, 3]) for cut in cuts]
+    best = max(range(len(cuts)), key=lambda i: scores[i])
+    return best, cuts[best], scores
+
+
+def _image_to_mesh(images, torch, use_half: bool = True):
+    began = time.perf_counter()
+    _install_marching_cubes_fallback()
+    sys.path.insert(0, str(triposr_dir()))
+    import numpy as np
+    import rembg
+    from PIL import Image
+    from tsr.system import TSR
+    from tsr.utils import resize_foreground
+
+    began = lap("imports", began)
+    # rembg's default (bria-rmbg) takes ~9 s per image on CPU; isnet gives the same cutouts in well under 1 s
+    session = rembg.new_session(os.environ.get("JARVIS_3D_REMBG", "isnet-general-use"))
+    began = lap("rembg_session", began)
+    out = debug_dir()
+    for number, candidate in enumerate(images):
+        candidate.save(out / f"jarvis_3d_debug_candidate{number}.png")
+    best, cut, scores = _pick_cutout(images, session)
+    began = lap("cutout_pick", began)
+    images[best].save(out / "jarvis_3d_debug.png")
+    print("CANDIDATES " + json.dumps({"scores": scores, "chosen": best}), flush=True)
+    cut.save(out / "jarvis_3d_debug_cutout.png")
+    cut = resize_foreground(cut, 0.85)
+    arr = np.array(cut).astype(np.float32) / 255.0
+    stats = cutout_stats(arr[:, :, 3] * 255.0)
+    arr = arr[:, :, :3] * arr[:, :, 3:4] + (1 - arr[:, :, 3:4]) * 0.5
+    prepared = Image.fromarray((arr * 255.0).astype(np.uint8))
+    prepared.save(out / "jarvis_3d_debug_tripo_input.png")
+    print("CUTOUT " + json.dumps(stats), flush=True)
+    lap("debug_images", began)
+    started = time.perf_counter()
+    model = TSR.from_pretrained(TRIPOSR_MODEL, config_name="config.yaml", weight_name="model.ckpt")
+    model.to("cuda")
+    # autocast keeps the weights in fp32 but runs the heavy matmuls in fp16, so float32 inputs still work
+    precision = torch.autocast("cuda", dtype=torch.float16, enabled=use_half)
+    started = lap("triposr_load", started)
+    try:
+        last_oom = None
+        for resolution, chunk in QUALITY_STEPS:
+            try:
+                model.renderer.set_chunk_size(chunk)
+                with torch.no_grad(), precision:
+                    codes = model([prepared], device="cuda")
+                    if use_half and not bool(torch.isfinite(codes).all()):
+                        raise FloatingPointError("half precision produced non-finite triplane codes")
+                    started = lap("triposr_forward", started)
+                    mesh = model.extract_mesh(codes, True, resolution=resolution)[0]
+                lap("marching_cubes", started)
+                return mesh
+            except torch.cuda.OutOfMemoryError as exc:
+                last_oom = exc
+                _free(torch)
+        raise last_oom
+    finally:
+        del model
+        _free(torch)
+
+
+def _to_gltf_y_up(mesh):
+    """TripoSR meshes are Z-up; glTF/Three.js are Y-up (y' = z, z' = -y)."""
+    import numpy as np
+    from trimesh.transformations import rotation_matrix
+    mesh.apply_transform(rotation_matrix(-np.pi / 2, [1, 0, 0]))
+    return mesh
+
+
+def generate(prompt: str, out: Path, image: Path | None = None) -> dict:
+    import torch
+    if not torch.cuda.is_available():
+        return {"ok": False, "code": "no_cuda", "message": "no CUDA GPU available"}
+    try:
+        _free(torch)
+        began = time.perf_counter()
+        if image is not None:
+            # image-to-3D: the user's picture replaces the SD-Turbo stage
+            from PIL import Image
+            images = [Image.open(image).convert("RGB")]
+            image_prompt = f"image:{Path(image).name}"
+            lap("load_image", began)
+        else:
+            image_prompt, report = build_image_prompt(prompt)
+            print("IMAGE_PROMPT " + json.dumps({"prompt": image_prompt, **report}), flush=True)
+            images = _text_to_images(image_prompt, torch, candidate_count())
+            lap("sd_turbo", began)
+        try:
+            mesh = _image_to_mesh(images, torch, half_precision())
+        except FloatingPointError as exc:
+            print("HALF_FALLBACK " + str(exc), flush=True)
+            _free(torch)
+            mesh = _image_to_mesh(images, torch, False)
+        mesh = _to_gltf_y_up(mesh)
+        lap("total", began)
+        exported = time.perf_counter()
+        mesh.export(str(out))
+        lap("export", exported)
+        _free(torch)
+    except torch.cuda.OutOfMemoryError:
+        _free(torch)
+        return {"ok": False, "code": "oom", "message": "CUDA out of memory"}
+    except Exception as exc:
+        return {"ok": False, "code": "error", "message": f"{type(exc).__name__}: {exc}"[:400]}
+    return {"ok": True, "path": str(out), "vertices": int(len(mesh.vertices)), "faces": int(len(mesh.faces)),
+            "image_prompt": image_prompt}
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--probe", action="store_true")
+    parser.add_argument("--prompt")
+    parser.add_argument("--image")
+    parser.add_argument("--out")
+    args = parser.parse_args(argv)
+    if args.probe:
+        emit(probe())
+        return 0
+    if not (args.prompt or args.image) or not args.out:
+        emit({"ok": False, "code": "error", "message": "--prompt (or --image) and --out are required"})
+        return 2
+    result = generate(args.prompt or "", Path(args.out), Path(args.image) if args.image else None)
+    emit(result)
+    return 0 if result["ok"] else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+```
+
+### FILE: core/task_runner.py ###
+
+```python
+"""TaskRunner: runs a planned sequence of tools on its own. No Qt imports.
+
+Steps are {"tool", "args"} (optionally "fallback": another step, used when the tool fails).
+`read` actions run back to back; the first `write` or `destructive` action pauses the task
+(status ``awaiting_confirmation``) until task_runner_confirm, so the user always approves
+changes. Narration stays with the model: the runner only drives tools.
+"""
+from __future__ import annotations
+
+import re
+import threading
+from typing import Callable
+
+MAX_STEPS = 12
+_FAIL_PREFIXES = ("No ready-made", "Invalid request", "3D generation failed", "Action '", "Tool '")
+_PART_WORDS = {"cpu": "cpu", "processore": "cpu", "ram": "ram", "memoria": "ram", "ventola": "fan",
+               "fan": "fan", "scheda madre": "motherboard", "motherboard": "motherboard", "case": "case"}
+
+
+class TaskRunner:
+    def __init__(self, registry, ctx_factory: Callable[[], dict] | None = None, run_async: bool = True):
+        self._registry = registry
+        self._ctx = ctx_factory or (lambda: {})
+        self._async = run_async
+        self._lock = threading.RLock()
+        self._reset()
+
+    def _reset(self) -> None:
+        self.objective = ""
+        self.steps: list[dict] = []
+        self.index = 0
+        self.status = "idle"
+        self._cancel = threading.Event()
+        self._thread: threading.Thread | None = None
+
+    # ---- public API -------------------------------------------------
+    def start(self, objective: str, steps=None) -> str:
+        with self._lock:
+            if self.status in ("running", "awaiting_confirmation"):
+                return "A task is already active. Use task_runner_status, or task_runner_cancel first."
+            plan = steps if steps else plan_for(objective)
+            try:
+                plan = self._normalise(plan)
+            except ValueError as exc:
+                return f"Invalid plan: {exc}"
+            if not plan:
+                return ("I could not plan this objective automatically. Pass 'steps' "
+                        "(a list of {tool, args}) or run the tools one by one.")
+            self._reset()
+            self.objective, self.steps, self.status = objective, plan, "running"
+        self._go()
+        return self.status_text()
+
+    def confirm(self) -> str:
+        with self._lock:
+            if self.status != "awaiting_confirmation":
+                return "No step is waiting for confirmation."
+            self.steps[self.index]["confirmed"] = True
+            self.status = "running"
+        self._go()
+        return self.status_text()
+
+    def cancel(self) -> str:
+        with self._lock:
+            if self.status not in ("running", "awaiting_confirmation"):
+                return "No active task to cancel."
+            self._cancel.set()
+            self.status = "cancelled"
+            for step in self.steps[self.index:]:
+                if step["state"] == "pending":
+                    step["state"] = "cancelled"
+        return "Task cancelled."
+
+    def wait(self, timeout: float = 30.0) -> None:
+        thread = self._thread
+        if thread is not None:
+            thread.join(timeout)
+
+    def status_text(self) -> str:
+        with self._lock:
+            if self.status == "idle":
+                return "No task has been started."
+            lines = [f"Task '{self.objective}': {self.status}"]
+            for i, step in enumerate(self.steps, 1):
+                detail = f" -> {step['result'][:160]}" if step.get("result") else ""
+                lines.append(f"{i}. {step['tool']} [{step['state']}]{detail}")
+            if self.status == "awaiting_confirmation":
+                step = self.steps[self.index]
+                lines.append(f"Waiting for the user's OK before running {step['tool']} ({step['risk']}). "
+                             "Ask them, then call task_runner_confirm (or task_runner_cancel).")
+            return "\n".join(lines)
+
+    # ---- internals --------------------------------------------------
+    def _normalise(self, plan) -> list[dict]:
+        if not isinstance(plan, list) or len(plan) > MAX_STEPS:
+            raise ValueError(f"steps must be a list of at most {MAX_STEPS} items")
+        out = []
+        for raw in plan:
+            step = self._one(raw)
+            if isinstance(raw, dict) and isinstance(raw.get("fallback"), dict):
+                step["fallback"] = self._one(raw["fallback"])
+            out.append(step)
+        return out
+
+    def _one(self, raw) -> dict:
+        tool = raw.get("tool") if isinstance(raw, dict) else None
+        if not tool or not self._registry.has(tool) or tool.startswith("task_runner"):
+            raise ValueError(f"unknown or not allowed tool: {tool!r}")
+        args = raw.get("args") or {}
+        if not isinstance(args, dict):
+            raise ValueError("args must be an object")
+        return {"tool": tool, "args": dict(args), "risk": self._registry.risk_class(tool),
+                "state": "pending", "result": "", "confirmed": False}
+
+    def _go(self) -> None:
+        if self._async:
+            self._thread = threading.Thread(target=self._loop, name="task-runner", daemon=True)
+            self._thread.start()
+        else:
+            self._loop()
+
+    def _loop(self) -> None:
+        while True:
+            with self._lock:
+                if self._cancel.is_set() or self.status != "running":
+                    return
+                if self.index >= len(self.steps):
+                    self.status = "done"
+                    return
+                step = self.steps[self.index]
+                if step["risk"] != "read" and not step["confirmed"]:
+                    step["state"] = "awaiting_confirmation"
+                    self.status = "awaiting_confirmation"
+                    return
+                step["state"] = "running"
+            self._run_step(step)
+            with self._lock:
+                if self._cancel.is_set():
+                    return
+                if step["state"] == "failed":
+                    self.status = "failed"
+                    return
+                self.index += 1
+
+    def _run_step(self, step: dict) -> None:
+        for candidate in (step, step.get("fallback")):
+            if not candidate:
+                continue
+            args = dict(candidate["args"])
+            if candidate["risk"] == "destructive":
+                args["confirmed"] = True
+            try:
+                result = str(self._registry.run(candidate["tool"], args, self._ctx()))
+            except Exception as exc:
+                result = f"Tool '{candidate['tool']}' failed: {exc}"
+            step["result"] = result
+            if not result.startswith(_FAIL_PREFIXES):
+                step["state"] = "done"
+                return
+        step["state"] = "failed"
+
+
+_RUNNER: TaskRunner | None = None
+
+
+def configure(registry, ctx_factory: Callable[[], dict] | None = None) -> TaskRunner:
+    """Called by main.py once the action registry exists."""
+    global _RUNNER
+    _RUNNER = TaskRunner(registry, ctx_factory)
+    return _RUNNER
+
+
+def get_runner() -> TaskRunner | None:
+    return _RUNNER
+
+
+def plan_for(objective: str) -> list[dict]:
+    """Deterministic plans for the known multi-step requests; [] when unsure."""
+    text = str(objective or "").lower()
+    plan: list[dict] = []
+    wants_pc = re.search(r"\b(pc|computer)\b", text) is not None
+    if wants_pc and re.search(r"smonta|esplod|disassembl|explode|spiega|explain", text):
+        plan += [{"tool": "viewer_3d", "args": {"mode": "load_model", "model": "cad/pc.glb"}},
+                 {"tool": "viewer_3d", "args": {"mode": "explode_model"}}]
+        for word, part in _PART_WORDS.items():
+            if re.search(rf"\b{re.escape(word)}\b", text):
+                plan.append({"tool": "viewer_3d", "args": {"mode": "highlight_part", "part": part}})
+                break
+        return plan
+    found = re.search(r"cerca(?:re)?\s+(?:una?\s+|un'|il\s+|la\s+)?(.+?)(?:\s+(?:su\s+google|online|sul web))?\s*(?:,|\be\b|\bpoi\b|$)", text)
+    if found and re.search(r"\b3d\b|ologramm|hologram", text):
+        query = found.group(1).strip()
+        plan = [{"tool": "search_3d_model", "args": {"query": query},
+                 "fallback": {"tool": "generate_3d_model", "args": {"prompt": query}}}]
+        style = next((s for s in ("realistic", "blueprint", "toon", "flat", "hologram") if s in text), None)
+        if style:
+            plan.append({"tool": "viewer_3d", "args": {"mode": "set_material_style", "style": style}})
+        return plan
+    return []
+```
+
+### FILE: assets/viewer3d/src/viewer.js ###
+
+```javascript
+import * as THREE from "three";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader.js";
+
+const state = {
+  markers: [], target: null, spin: true, ready: false, flights: null,
+  model: null, modelStatus: "none", modelError: "", shaderError: "", partInfo: {},
+  style: "hologram", controlsOn: true,
+};
+const canvas = document.getElementById("c");
+// Senza WebGL (GPU in blocklist) il viewer resta controllabile ma non disegna.
+let renderer = null;
+try {
+  renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+  renderer.setClearColor(0x000308, 1);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.debug.onShaderError = () => { state.shaderError = "shader compile failed"; };
+} catch (e) {
+  console.error("WebGL non disponibile: " + e.message);
+}
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
+camera.position.set(0, 0, 4.2);
+
+// Drag = rotate, wheel = zoom, right button = pan. Only active while a model is shown
+// (the globe is driven by flyTo/spin) and while setControls(true) is in effect.
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true;
+controls.dampingFactor = 0.12;
+controls.minDistance = 1.2;
+controls.maxDistance = 12;
+controls.enabled = false;
+controls.addEventListener("start", () => { state.spin = false; });
+function syncControls() { controls.enabled = state.controlsOn && !!state.model; }
+function resetCamera() {
+  camera.position.set(0, 0, 4.2);
+  controls.target.set(0, 0, 0);
+  controls.update();
+}
+
+const globe = new THREE.Group();
+scene.add(globe);
+const cyan = 0x00d4ff;
+
+// Only the solid styles (blueprint, realistic) are lit; globe and hologram are unlit.
+const hemiLight = new THREE.HemisphereLight(0xcfe8ff, 0x10203a, 1.6);
+scene.add(hemiLight);
+const keyLight = new THREE.DirectionalLight(0xffffff, 2.4);
+keyLight.position.set(2, 3, 4);
+// Shadows are only cast in the realistic style (see syncLook).
+keyLight.shadow.mapSize.set(2048, 2048);
+keyLight.shadow.camera.left = -2.2; keyLight.shadow.camera.right = 2.2;
+keyLight.shadow.camera.top = 2.2; keyLight.shadow.camera.bottom = -2.2;
+keyLight.shadow.camera.near = 0.5; keyLight.shadow.camera.far = 12;
+keyLight.shadow.bias = -0.0005;
+keyLight.shadow.normalBias = 0.02;
+scene.add(keyLight);
+
+// Invisible floor that only shows the model's shadow.
+const shadowFloor = new THREE.Mesh(
+  new THREE.PlaneGeometry(8, 8),
+  new THREE.ShadowMaterial({ opacity: 0.45 })
+);
+shadowFloor.rotation.x = -Math.PI / 2;
+shadowFloor.receiveShadow = true;
+shadowFloor.visible = false;
+scene.add(shadowFloor);
+
+// Studio HDRI (Poly Haven, CC0): loaded once, on first use of the realistic style.
+let envMap = null;
+let envLoading = false;
+function loadEnvironment() {
+  if (!renderer || envMap || envLoading) return;
+  envLoading = true;
+  new RGBELoader().load(
+    "hdr/studio.hdr",
+    (tex) => {
+      const pmrem = new THREE.PMREMGenerator(renderer);
+      envMap = pmrem.fromEquirectangular(tex).texture;
+      tex.dispose();
+      pmrem.dispose();
+      envLoading = false;
+      syncLook();
+    },
+    undefined,
+    () => { envLoading = false; state.envError = "hdri not loaded"; }
+  );
+}
+
+// Realistic = PBR look: environment reflections, tone mapping, shadows. The other styles
+// keep their flat look (no environment, no tone mapping, no shadow pass).
+function syncLook() {
+  if (!renderer) return;
+  const realistic = !!state.model && state.model.style === "realistic";
+  if (realistic) loadEnvironment();
+  scene.environment = realistic ? envMap : null;
+  // The HDRI already lights the model: lower the stage lights so metal does not blow out.
+  hemiLight.intensity = realistic ? 0.15 : 1.6;
+  keyLight.intensity = realistic ? 1.1 : 2.4;
+  scene.environmentIntensity = 0.4;
+  const tone = realistic ? THREE.ACESFilmicToneMapping : THREE.NoToneMapping;
+  if (renderer.toneMapping !== tone) {
+    renderer.toneMapping = tone;
+    scene.traverse(o => { if (o.material) [].concat(o.material).forEach(m => { m.needsUpdate = true; }); });
+  }
+  keyLight.castShadow = realistic;
+  shadowFloor.visible = realistic;
+  if (state.model) {
+    state.model.meshes.forEach(o => { o.castShadow = realistic; o.receiveShadow = realistic; });
+    if (realistic) {
+      state.model.group.updateMatrixWorld(true);
+      shadowFloor.position.y = new THREE.Box3().setFromObject(state.model.group).min.y - 0.02;
+    }
+  }
+}
+
+const sphere = new THREE.Mesh(
+  new THREE.SphereGeometry(1, 48, 32),
+  new THREE.MeshBasicMaterial({ color: cyan, wireframe: true, transparent: true, opacity: 0.18 })
+);
+globe.add(sphere);
+globe.add(new THREE.Mesh(
+  new THREE.SphereGeometry(0.985, 32, 24),
+  new THREE.MeshBasicMaterial({ color: 0x001018, transparent: true, opacity: 0.85 })
+));
+
+const rings = [];
+for (let i = 0; i < 3; i++) {
+  const ring = new THREE.Mesh(
+    new THREE.RingGeometry(1.25 + i * 0.12, 1.26 + i * 0.12, 128),
+    new THREE.MeshBasicMaterial({ color: cyan, transparent: true, opacity: 0.35 - i * 0.08, side: THREE.DoubleSide })
+  );
+  ring.rotation.x = Math.PI / 2.3 + i * 0.25;
+  scene.add(ring);
+  rings.push(ring);
+}
+
+function toVec(lat, lon, r) {
+  const phi = (90 - lat) * Math.PI / 180;
+  const theta = (lon + 180) * Math.PI / 180;
+  return new THREE.Vector3(
+    -r * Math.sin(phi) * Math.cos(theta),
+    r * Math.cos(phi),
+    r * Math.sin(phi) * Math.sin(theta)
+  );
+}
+
+function resize() {
+  const w = canvas.clientWidth || 1, h = canvas.clientHeight || 1;
+  if (renderer) renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+window.addEventListener("resize", resize);
+
+// Rotation that brings (lat, lon) to face the camera (+z).
+function rotationFor(lat, lon) {
+  const target = toVec(lat, lon, 1).normalize();
+  return new THREE.Quaternion().setFromUnitVectors(target, new THREE.Vector3(0, 0, 1));
+}
+
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(0.1, (now - last) / 1000);
+  last = now;
+  if (state.target) {
+    globe.quaternion.slerp(state.target, Math.min(1, dt * 3));
+    if (globe.quaternion.angleTo(state.target) < 0.005) {
+      globe.quaternion.copy(state.target);
+    }
+  } else if (state.spin) {
+    globe.rotation.y += dt * 0.25;
+  }
+  rings.forEach((r, i) => { r.rotation.z += dt * (0.2 + i * 0.1); });
+  if (state.model && state.model.holo.length) {
+    state.model.holo.forEach(m => { m.uniforms.uTime.value = now / 1000; });
+  }
+  if (state.model && state.spin) state.model.group.rotation.y += dt * 0.4;
+  if (state.model && state.model.parts.length) {
+    const m = state.model;
+    m.explode += (m.explodeTo - m.explode) * Math.min(1, dt * 4);
+    if (Math.abs(m.explodeTo - m.explode) < 0.002) m.explode = m.explodeTo;
+    m.parts.forEach(p => p.node.position.copy(p.origin).addScaledVector(p.dir, p.dist * m.explode));
+  }
+  pickPart(now);
+  if (controls.enabled) controls.update();
+  if (renderer) renderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+
+function num(v, lo, hi, name) {
+  const n = Number(v);
+  if (!Number.isFinite(n) || n < lo || n > hi) throw new Error(name + " out of range");
+  return n;
+}
+
+// Parts are the first level of nodes that actually splits the model.
+function collectParts(root, size) {
+  let level = [root];
+  for (let i = 0; i < 6; i++) {
+    const next = level.flatMap(o => o.children);
+    if (next.length === 0) return [];
+    if (next.length > 1) { level = next; break; }
+    level = next;
+  }
+  if (level.length < 2) return [];
+  // A split into just two chunks is a poor explosion: open up to three more levels.
+  for (let k = 0; k < 3 && level.length < 3; k++) {
+    const deeper = level.flatMap(o => (o.children.length ? o.children : [o]));
+    if (deeper.length === level.length) break;
+    level = deeper;
+  }
+  const all = new THREE.Box3().setFromObject(root).getCenter(new THREE.Vector3());
+  return level.map((node, i) => {
+    const c = new THREE.Box3().setFromObject(node).getCenter(new THREE.Vector3());
+    const dir = node.parent.worldToLocal(c).sub(node.parent.worldToLocal(all.clone()));
+    if (dir.lengthSq() < 1e-8) dir.set(Math.cos(i * 2.4), Math.sin(i * 2.4), 0.3);
+    return { node, origin: node.position.clone(), dir: dir.normalize(), dist: size * 0.6, saved: null };
+  });
+}
+
+function findNode(root, name) {
+  let hit = null;
+  root.traverse(o => { if (!hit && o.name === name) hit = o; });
+  return hit;
+}
+
+const HOLO_COLOR = 0x00d4ff;
+const HOLO_VERT = `
+varying vec3 vNormal; varying vec3 vView; varying float vY;
+void main() {
+  vec4 mv = modelViewMatrix * vec4(position, 1.0);
+  vNormal = normalize(normalMatrix * normal);
+  vView = normalize(-mv.xyz);
+  vY = (modelMatrix * vec4(position, 1.0)).y;
+  gl_Position = projectionMatrix * mv;
+}`;
+const HOLO_FRAG = `
+uniform vec3 uColor; uniform float uTime;
+varying vec3 vNormal; varying vec3 vView; varying float vY;
+void main() {
+  float fres = pow(1.0 - abs(dot(normalize(vNormal), normalize(vView))), 2.0);
+  float scan = 0.55 + 0.45 * sin(vY * 90.0 - uTime * 3.0);
+  float glitch = step(0.985, fract(sin(floor(uTime * 8.0) + floor(vY * 20.0)) * 43758.5453));
+  float a = (0.22 + fres * 0.75) * scan + glitch * 0.3;
+  gl_FragColor = vec4(uColor * (0.7 + fres), a);
+}`;
+
+function holoMaterial() {
+  return new THREE.ShaderMaterial({
+    uniforms: { uColor: { value: new THREE.Color(HOLO_COLOR) }, uTime: { value: 0 } },
+    vertexShader: HOLO_VERT,
+    fragmentShader: HOLO_FRAG,
+    transparent: true,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    blending: THREE.AdditiveBlending,
+  });
+}
+
+const BLUEPRINT_COLOR = 0x0055ff;
+const EDGE_COLOR = 0x00f0ff;
+const STYLES = ["hologram", "blueprint", "realistic", "flat", "toon"];
+
+function meshesOf(root) {
+  const list = [];
+  root.traverse(o => { if (o.isMesh) list.push(o); });
+  return list;
+}
+
+function blueprintMaterial() {
+  return new THREE.MeshStandardMaterial({
+    color: BLUEPRINT_COLOR, roughness: 0.8, metalness: 0.2, side: THREE.DoubleSide,
+    // Pushes the faces back so the edge lines do not z-fight with them.
+    polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1,
+  });
+}
+
+// Three flat tone bands for the toon look; NearestFilter keeps the steps hard.
+let toonRamp = null;
+function toonGradient() {
+  if (!toonRamp) {
+    toonRamp = new THREE.DataTexture(new Uint8Array([90, 170, 255]), 3, 1, THREE.RedFormat);
+    toonRamp.minFilter = toonRamp.magFilter = THREE.NearestFilter;
+    toonRamp.needsUpdate = true;
+  }
+  return toonRamp;
+}
+
+// 2D artwork: keep the original colours/texture but drop the PBR lighting that dirties them.
+// flat = unlit; toon = cartoon shading. Both keep the model's own map or vertex colours.
+function drawnMaterial(base, style) {
+  const src = [].concat(base)[0];
+  const opts = { color: src.color ? src.color.clone() : new THREE.Color(0xffffff), side: THREE.DoubleSide };
+  if (src.map) opts.map = src.map;
+  if (src.vertexColors) opts.vertexColors = true;
+  if (src.transparent || src.alphaTest) { opts.transparent = src.transparent; opts.alphaTest = src.alphaTest; }
+  if (style === "toon") return new THREE.MeshToonMaterial({ ...opts, gradientMap: toonGradient() });
+  return new THREE.MeshBasicMaterial(opts);
+}
+
+// Callers clear any glow first: this swaps the materials the glow clones from.
+function applyStyle(model, style) {
+  model.holo = [];
+  model.meshes.forEach(o => {
+    if (o.userData.base) {
+      o.material.dispose();
+      o.material = o.userData.base;
+      delete o.userData.base;
+      delete o.userData.holo;
+      delete o.userData.glow;
+    }
+    if (o.userData.edgeLines) {
+      const lines = o.userData.edgeLines;
+      o.remove(lines);
+      lines.geometry.dispose();
+      lines.material.dispose();
+      delete o.userData.edgeLines;
+    }
+    if (style === "hologram") {
+      if (!o.geometry.attributes.normal) o.geometry.computeVertexNormals();
+      o.userData.base = o.material;
+      o.material = holoMaterial();
+      o.userData.holo = true;
+      model.holo.push(o.material);
+    } else if (style === "blueprint") {
+      o.userData.base = o.material;
+      o.material = blueprintMaterial();
+      const lines = new THREE.LineSegments(
+        new THREE.EdgesGeometry(o.geometry, 45),
+        new THREE.LineBasicMaterial({ color: EDGE_COLOR })
+      );
+      o.add(lines);
+      o.userData.edgeLines = lines;
+    } else if (style === "flat" || style === "toon") {
+      o.userData.base = o.material;
+      o.material = drawnMaterial(o.material, style);
+    }
+  });
+  model.style = style;
+  model.hologram = style === "hologram";
+}
+
+// Hover tooltip: raycasting is throttled and only runs when the mouse moved.
+const tip = document.getElementById("tip");
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+const hover = { x: 0, y: 0, pending: false, last: 0, rays: 0, name: "", text: "" };
+const RAY_INTERVAL_MS = 50;
+
+// Hover events reach Python through QWebChannel (see ViewerBridge in ui.py).
+let bridge = null;
+if (window.qt && window.qt.webChannelTransport && typeof QWebChannel !== "undefined") {
+  new QWebChannel(window.qt.webChannelTransport, (channel) => { bridge = channel.objects.bridge || null; });
+}
+function emitHover(name, text) {
+  if (bridge) bridge.onHover(String(name), String(text));
+}
+
+function hideTip() {
+  if (hover.name) emitHover("", "");
+  hover.name = ""; hover.text = "";
+  if (tip) tip.style.display = "none";
+}
+
+function placeTip() {
+  if (!tip) return;
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  tip.style.left = Math.max(0, Math.min(hover.x + 14, window.innerWidth - w - 4)) + "px";
+  tip.style.top = Math.max(0, Math.min(hover.y + 16, window.innerHeight - h - 4)) + "px";
+}
+
+function showTip(name, text) {
+  hover.name = name; hover.text = text;
+  emitHover(name, text);
+  if (!tip) return;
+  tip.textContent = "";
+  const title = document.createElement("b");
+  title.textContent = name;
+  tip.appendChild(title);
+  if (text) {
+    const body = document.createElement("div");
+    body.textContent = text;
+    tip.appendChild(body);
+  }
+  tip.style.display = "block";
+  placeTip();
+}
+
+// TripoSR names its single mesh "geometry_0": show the model's own name instead.
+const GENERIC_NAME = /^geometry(_?\d+)?$/i;
+function modelLabel() {
+  const file = state.model ? state.model.name : "";
+  let base = file.split("/").pop().replace(/\.(glb|gltf)$/i, "");
+  base = base.replace(/-[0-9a-f]{6}$/i, "").replace(/^image-/i, "").replace(/[-_]+/g, " ").trim();
+  return base ? base.charAt(0).toUpperCase() + base.slice(1) : "Modello";
+}
+
+// Nearest named ancestor (the model root itself is not a part); a described one wins.
+function partAt(obj, root) {
+  let first = "";
+  for (let o = obj; o && o !== root; o = o.parent) {
+    if (!o.name) continue;
+    const shown = GENERIC_NAME.test(o.name) ? modelLabel() : o.name;
+    if (!first) first = shown;
+    if (Object.prototype.hasOwnProperty.call(state.partInfo, shown)) {
+      return { name: shown, text: state.partInfo[shown] };
+    }
+  }
+  if (first) return { name: first, text: "" };
+  // Unnamed nodes (e.g. Khronos engine models): label by top-level part.
+  const m = state.model;
+  const idx = m ? m.parts.findIndex(p => { for (let o = obj; o; o = o.parent) if (o === p.node) return true; return false; }) : -1;
+  if (idx >= 0) {
+    const key = "Parte " + (idx + 1);
+    return { name: key, text: Object.prototype.hasOwnProperty.call(state.partInfo, key) ? state.partInfo[key] : "" };
+  }
+  return { name: "", text: "" };
+}
+
+function pickPart(now) {
+  if (!hover.pending || now - hover.last < RAY_INTERVAL_MS) return;
+  hover.last = now;
+  const m = state.model;
+  if (!m || !m.group.visible) { hover.pending = false; hideTip(); return; }
+  const rect = canvas.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+  pointer.set(((hover.x - rect.left) / rect.width) * 2 - 1, -((hover.y - rect.top) / rect.height) * 2 + 1);
+  scene.updateMatrixWorld();
+  camera.updateMatrixWorld();
+  raycaster.setFromCamera(pointer, camera);
+  hover.rays++;
+  const hit = raycaster.intersectObjects(m.meshes, false)[0];
+  const part = hit ? partAt(hit.object, m.root) : { name: "", text: "" };
+  if (!part.name) { hover.pending = false; hideTip(); return; }
+  // While the tooltip is up keep re-testing (a spinning model moves under the cursor).
+  if (part.name !== hover.name || part.text !== hover.text) showTip(part.name, part.text);
+  else placeTip();
+}
+
+canvas.addEventListener("mousemove", (e) => {
+  hover.x = e.clientX; hover.y = e.clientY; hover.pending = true;
+  if (tip && tip.style.display === "block") placeTip();
+});
+canvas.addEventListener("mouseleave", () => { hover.pending = false; hideTip(); });
+
+function setGlow(node, on) {
+  node.traverse(o => {
+    if (!o.isMesh) return;
+    if (o.userData.holo) {
+      o.userData.glow = on;
+      o.material.uniforms.uColor.value.setHex(on ? 0xffd400 : HOLO_COLOR);
+      return;
+    }
+    if (on && !o.userData.orig) {
+      o.userData.orig = o.material;
+      o.material = [].concat(o.material).map(m => {
+        const c = m.clone();
+        if (c.emissive) { c.emissive.setHex(0x00d4ff); c.emissiveIntensity = 1.2; }
+        else if (c.color) c.color.setHex(0x00d4ff);
+        return c;
+      });
+      if (o.material.length === 1) o.material = o.material[0];
+    } else if (!on && o.userData.orig) {
+      [].concat(o.material).forEach(m => m.dispose());
+      o.material = o.userData.orig;
+      delete o.userData.orig;
+    }
+  });
+}
+
+function nodeNames(root) {
+  const out = [];
+  root.traverse(o => { if (o !== root && o.name) out.push(o.name); });
+  return out;
+}
+
+window.jarvisViewer = {
+  flyTo(lat, lon) {
+    state.target = rotationFor(num(lat, -90, 90, "lat"), num(lon, -180, 180, "lon"));
+    state.spin = false;
+  },
+  addMarker(lat, lon, label) {
+    lat = num(lat, -90, 90, "lat"); lon = num(lon, -180, 180, "lon");
+    const dot = new THREE.Mesh(
+      new THREE.SphereGeometry(0.025, 12, 12),
+      new THREE.MeshBasicMaterial({ color: 0xffd400 })
+    );
+    dot.position.copy(toVec(lat, lon, 1.01));
+    globe.add(dot);
+    state.markers.push({ lat, lon, label: String(label || "").slice(0, 60), obj: dot });
+  },
+  clearMarkers() {
+    state.markers.forEach(m => globe.remove(m.obj));
+    state.markers = [];
+  },
+  setFlights(list) {
+    this.clearFlights();
+    const pos = new Float32Array(list.length * 3);
+    list.forEach((f, i) => toVec(f[0], f[1], 1.02).toArray(pos, i * 3));
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    const pts = new THREE.Points(geo, new THREE.PointsMaterial({
+      color: 0xffd400, size: 0.028, sizeAttenuation: true, depthTest: true,
+    }));
+    globe.add(pts);
+    state.flights = { obj: pts, list: list.map(f => ({ lat: f[0], lon: f[1], callsign: f[2] })) };
+  },
+  clearFlights() {
+    if (state.flights) { globe.remove(state.flights.obj); state.flights.obj.geometry.dispose(); }
+    state.flights = null;
+  },
+  loadModel(name) {
+    this.removeModel();
+    state.modelStatus = "loading";
+    new GLTFLoader().load(
+      "models/" + name.split("/").map(encodeURIComponent).join("/"),
+      (gltf) => {
+        const root = gltf.scene;
+        const box = new THREE.Box3().setFromObject(root);
+        const size = box.getSize(new THREE.Vector3());
+        const scale = 1.6 / (Math.max(size.x, size.y, size.z) || 1);
+        const group = new THREE.Group();
+        root.position.sub(box.getCenter(new THREE.Vector3()));
+        group.add(root);
+        group.scale.setScalar(scale);
+        scene.add(group);
+        group.updateMatrixWorld(true);
+        state.model = { group, root, name, meshes: meshesOf(root), parts: collectParts(root, Math.max(size.x, size.y, size.z) || 1), explode: 0, explodeTo: 0, highlight: "", holo: [], hologram: false, style: "hologram" };
+                applyStyle(state.model, state.style);
+        syncLook();
+        state.modelStatus = "ready";
+        syncControls();
+        globe.visible = false;
+        rings.forEach(r => { r.visible = false; });
+      },
+      undefined,
+      (err) => { state.modelStatus = "error"; state.modelError = String(err && err.message || err); }
+    );
+  },
+  explodeModel(on) {
+    if (state.model) state.model.explodeTo = on ? 1 : 0;
+  },
+  highlightPart(name) {
+    const m = state.model;
+    if (!m) return;
+    if (m.highlight) { const old = findNode(m.root, m.highlight); if (old) setGlow(old, false); }
+    m.highlight = "";
+    const node = name ? findNode(m.root, name) : null;
+    if (node) { setGlow(node, true); m.highlight = name; }
+  },
+  setHologram(on) {
+    this.setMaterialStyle(on ? "hologram" : "realistic");
+  },
+  setMaterialStyle(style) {
+    style = String(style);
+    if (!STYLES.includes(style)) throw new Error("style must be one of " + STYLES.join(", "));
+    state.style = style;
+    const m = state.model;
+    if (!m) return;
+    const keep = m.highlight;
+    if (keep) this.highlightPart("");
+    applyStyle(m, style);
+    syncLook();
+    if (keep) this.highlightPart(keep);
+  },
+  setPartInfo(info) {
+    const out = {};
+    if (info && typeof info === "object" && !Array.isArray(info)) {
+      Object.entries(info).slice(0, 200).forEach(([k, v]) => { out[String(k).slice(0, 60)] = String(v).slice(0, 300); });
+    }
+    state.partInfo = out;
+    hover.pending = true;
+  },
+  clearModel() {
+    this.removeModel();
+    state.partInfo = {};
+  },
+  removeModel() {
+    if (state.model) {
+      scene.remove(state.model.group);
+      state.model.root.traverse(o => {
+        if (o.geometry) o.geometry.dispose();
+        [].concat(o.material || []).forEach(m => m.dispose());
+        if (o.userData && o.userData.base) [].concat(o.userData.base).forEach(m => m.dispose());
+      });
+    }
+    state.model = null;
+    state.modelStatus = "none";
+    state.modelError = "";
+    syncLook();
+    syncControls();
+    resetCamera();
+    hideTip();
+    globe.visible = true;
+    rings.forEach(r => { r.visible = true; });
+  },
+  spin(on) { state.spin = !!on; if (on) state.target = null; },
+  setControls(active) {
+    state.controlsOn = !!active;
+    syncControls();
+  },
+  getState() {
+    return {
+      ready: state.ready,
+      webgl: !!renderer,
+      controls: { enabled: controls.enabled, wanted: state.controlsOn, distance: Number(camera.position.distanceTo(controls.target).toFixed(3)), azimuth: Number(controls.getAzimuthalAngle().toFixed(3)) },
+      flights: state.flights ? state.flights.list.length : 0,
+      look: { environment: !!scene.environment, envLoaded: !!envMap, envError: state.envError || "", shadows: keyLight.castShadow, shadowFloor: shadowFloor.visible, toneMapping: renderer ? renderer.toneMapping : 0, shadowCasters: state.model ? state.model.meshes.filter(o => o.castShadow).length : 0 },
+      model: {
+        status: state.modelStatus,
+        name: state.model ? state.model.name : "",
+        label: state.model ? modelLabel() : "",
+        error: state.modelError,
+        nodes: state.model ? nodeNames(state.model.root) : [],
+        parts: state.model ? state.model.parts.length : 0,
+        explode: state.model ? Number(state.model.explode.toFixed(3)) : 0,
+        moved: state.model ? state.model.parts.map(p => Number(p.node.position.distanceTo(p.origin).toFixed(3))) : [],
+        highlight: state.model ? state.model.highlight : "",
+        glowing: state.model ? (() => { let n = 0; state.model.root.traverse(o => { if (o.userData.orig || o.userData.glow) n++; }); return n; })() : 0,
+        hologram: state.model ? state.model.hologram : false,
+        style: state.model ? state.model.style : "",
+        edges: state.model ? state.model.meshes.filter(o => o.userData.edgeLines).length : 0,
+        materials: state.model ? state.model.meshes.map(o => [].concat(o.material)[0].type) : [],
+        meshColors: state.model ? state.model.meshes.map(o => [].concat(o.material)[0].color ? [].concat(o.material)[0].color.getHexString() : "") : [],
+        partInfo: Object.keys(state.partInfo).length,
+        pendingStyle: state.style,
+        hover: { name: hover.name, text: hover.text, rays: hover.rays, visible: !!tip && tip.style.display === "block" },
+        shaderError: state.shaderError,
+      },
+      spin: state.spin,
+      flying: !!state.target,
+      markers: state.markers.map(m => ({ lat: m.lat, lon: m.lon, label: m.label })),
+    };
+  },
+};
+
+resize();
+state.ready = true;
+const boot = document.getElementById("boot");
+if (boot) {
+  if (renderer) boot.remove();
+  else boot.textContent = "WebGL non disponibile";
+}
+requestAnimationFrame(frame);
+```
+
+### FILE: core/viewer3d.py ###
+
+```python
+"""Validation for commands sent to the 3D viewer. No Qt imports.
+
+The page executes only functions in ALLOWED, with arguments passed as JSON
+(never interpolated into script text).
+"""
+from __future__ import annotations
+
+import json
+import re
+from pathlib import Path
+ALLOWED = {
+    "flyTo": 2,
+    "addMarker": 3,
+    "clearMarkers": 0,
+    "spin": 1,
+    "setFlights": 1,
+    "clearFlights": 0,
+    "loadModel": 1,
+    "clearModel": 0,
+    "explodeModel": 1,
+    "highlightPart": 1,
+    "setHologram": 1,
+    "setMaterialStyle": 1,
+    "setPartInfo": 1,
+    "setControls": 1,
+}
+STYLES = ("hologram", "blueprint", "realistic", "flat", "toon")
+MAX_PART_INFO = 200
+
+MODELS_DIR = Path(__file__).resolve().parent.parent / "assets" / "viewer3d" / "models"
+MAX_MODEL_BYTES = 40 * 1024 * 1024
+_MODEL_NAME = re.compile(r"^((cad|downloads)/)?[A-Za-z0-9][A-Za-z0-9_\-. ]{0,100}\.(glb|gltf)$")
+SUBFOLDERS = ("cad", "downloads")
+
+
+def _ensure_pc_cad(folder: Path) -> None:
+    """cad/pc.glb is built from code, not downloaded: create it on first use (needs trimesh)."""
+    try:
+        from core.make_pc_cad import make_pc_cad
+        make_pc_cad(folder)
+    except Exception:
+        pass
+
+
+def model_file(name, base: Path | None = None) -> Path:
+    """Resolve a model name (plain, or 'cad/<name>') to a file in the models folder, or raise ValueError."""
+    base = (base or MODELS_DIR).resolve()
+    name = str(name or "").strip()
+    if not _MODEL_NAME.match(name) or ".." in name:
+        raise ValueError("model must be a .glb/.gltf file name (optionally cad/<name>)")
+    path = (base / name).resolve()
+    if path.parent not in (base, *(base / sub for sub in SUBFOLDERS)):
+        raise ValueError("model must be inside the models folder")
+    if not path.is_file() and name == "cad/pc.glb":
+        _ensure_pc_cad(base / "cad")
+    if not path.is_file():
+        raise ValueError(f"model '{name}' not found in the models folder")
+    if path.stat().st_size > MAX_MODEL_BYTES:
+        raise ValueError("model file is too large")
+    return path
+
+
+def list_models(base: Path | None = None) -> dict[str, list[str]]:
+    """Model names available to loadModel: generated, pre-downloaded CAD and web-downloaded ones."""
+    base = (base or MODELS_DIR).resolve()
+    out = {"generated": [], "cad": [], "downloads": []}
+    if not (base / "cad" / "pc.glb").is_file():
+        _ensure_pc_cad(base / "cad")
+    for key, folder, prefix in (("generated", base, ""), ("cad", base / "cad", "cad/"),
+                                ("downloads", base / "downloads", "downloads/")):
+        if folder.is_dir():
+            out[key] = sorted(
+                prefix + p.name for p in folder.iterdir()
+                if p.is_file() and _MODEL_NAME.match(prefix + p.name)
+            )
+    return out
+
+
+def part_names(path: Path, limit: int = 60) -> list[str]:
+    """Node names of a .glb/.gltf as the viewer sees them (three.js sanitises names)."""
+    import struct
+
+    data = path.read_bytes()
+    if data[:4] == b"glTF":
+        length = struct.unpack_from("<I", data, 12)[0]
+        doc = json.loads(data[20:20 + length].decode("utf-8"))
+    else:
+        doc = json.loads(data.decode("utf-8"))
+    names = []
+    for node in doc.get("nodes", []):
+        name = re.sub(r"[\[\].:/]", "", re.sub(r"\s", "_", str(node.get("name") or "")))
+        if name and name not in names:
+            names.append(name)
+    return names[:limit]
+
+MAX_FLIGHTS = 400
+HOVER_PREFIX = "JARVIS_HOVER "
+
+
+def parse_hover(message) -> dict | None:
+    """Parse a viewer console line 'JARVIS_HOVER {json}'; None if it is not one or is malformed."""
+    if not isinstance(message, str) or not message.startswith(HOVER_PREFIX):
+        return None
+    try:
+        data = json.loads(message[len(HOVER_PREFIX):1000])
+    except ValueError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    name, text = data.get("name", ""), data.get("text", "")
+    return sanitize_hover(name, text)
+
+
+def sanitize_hover(name, text) -> dict | None:
+    """Validate hover fields received from the viewer; None if they are not strings."""
+    if not isinstance(name, str) or not isinstance(text, str):
+        return None
+    return {"name": name.strip()[:60], "text": text.strip()[:300]}
+
+REGIONS = {
+    "europe": (35.0, 72.0, -12.0, 40.0),
+    "usa": (24.0, 50.0, -125.0, -66.0),
+    "world": (-90.0, 90.0, -180.0, 180.0),
+}
+OPENSKY_URL = "https://opensky-network.org/api/states/all"
+
+
+def parse_states(payload: dict, limit: int = MAX_FLIGHTS) -> list[list]:
+    """OpenSky state vectors -> [[lat, lon, callsign, altitude_m], ...], airborne only."""
+    flights = []
+    for row in (payload or {}).get("states") or []:
+        try:
+            lon, lat, on_ground = row[5], row[6], row[8]
+        except (IndexError, TypeError):
+            continue
+        if lat is None or lon is None or on_ground:
+            continue
+        altitude = row[7] if len(row) > 7 and row[7] is not None else 0
+        flights.append([lat, lon, str(row[1] or "").strip()[:12], altitude])
+    # Evenly thinned so a capped list still covers the whole region.
+    if len(flights) > limit:
+        step = len(flights) / limit
+        flights = [flights[int(i * step)] for i in range(limit)]
+    return flights
+
+
+def fetch_flights(region: str = "europe", opener=None, timeout: float = 15.0) -> list[list]:
+    """Blocking HTTP call: run it in a worker thread, never on the UI thread."""
+    import urllib.request
+
+    if region not in REGIONS:
+        raise ValueError(f"Unknown region '{region}'. Use: {', '.join(REGIONS)}.")
+    lamin, lamax, lomin, lomax = REGIONS[region]
+    url = f"{OPENSKY_URL}?lamin={lamin}&lamax={lamax}&lomin={lomin}&lomax={lomax}"
+    request = urllib.request.Request(url, headers={"User-Agent": "jarvis-viewer3d"})
+    try:
+        with (opener or urllib.request.urlopen)(request, timeout=timeout) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except Exception as exc:
+        raise RuntimeError(f"OpenSky not reachable: {exc}") from None
+    return parse_states(payload)
+
+
+def _coord(value, low: float, high: float, name: str) -> float:
+    if isinstance(value, bool):
+        raise ValueError(f"{name} must be a number")
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{name} must be a number") from None
+    if not low <= number <= high:
+        raise ValueError(f"{name} must be between {low:g} and {high:g}")
+    return number
+
+
+def build_call(function: str, args: list) -> tuple[str, str]:
+    """Return (function, args_json) or raise ValueError."""
+    if function not in ALLOWED:
+        raise ValueError(f"Unknown viewer function '{function}'.")
+    if len(args) != ALLOWED[function]:
+        raise ValueError(f"{function} takes {ALLOWED[function]} argument(s).")
+    if function in ("flyTo", "addMarker"):
+        clean = [_coord(args[0], -90, 90, "lat"), _coord(args[1], -180, 180, "lon")]
+        if function == "addMarker":
+            clean.append(str(args[2])[:60])
+    elif function == "setFlights":
+        if not isinstance(args[0], list) or any(
+            not isinstance(f, (list, tuple)) or len(f) < 3 for f in args[0]
+        ):
+            raise ValueError("setFlights takes a list of [lat, lon, callsign]")
+        clean = [[
+            [_coord(f[0], -90, 90, "lat"), _coord(f[1], -180, 180, "lon"), str(f[2])[:12]]
+            for f in args[0][:MAX_FLIGHTS]
+        ]]
+    elif function == "loadModel":
+        # Existence is checked by model_file() in the tool; here only the shape.
+        if not isinstance(args[0], str) or not _MODEL_NAME.match(args[0]):
+            raise ValueError("model must be a plain .glb/.gltf file name")
+        clean = [args[0]]
+    elif function in ("explodeModel", "setHologram", "setControls"):
+        if not isinstance(args[0], bool):
+            raise ValueError(f"{function} takes true or false")
+        clean = [args[0]]
+    elif function == "highlightPart":
+        if not isinstance(args[0], str):
+            raise ValueError("part must be text")
+        clean = [args[0].strip()[:60]]
+    elif function == "setMaterialStyle":
+        style = args[0].strip().lower() if isinstance(args[0], str) else ""
+        if style not in STYLES:
+            raise ValueError(f"style must be one of: {', '.join(STYLES)}")
+        clean = [style]
+    elif function == "setPartInfo":
+        if not isinstance(args[0], dict):
+            raise ValueError("part info must be an object of part name -> description")
+        clean = [{
+            str(k).strip()[:60]: str(v).strip()[:300]
+            for k, v in list(args[0].items())[:MAX_PART_INFO]
+            if str(k).strip()
+        }]
+    elif function == "spin":
+        if not isinstance(args[0], bool):
+            raise ValueError("spin takes true or false")
+        clean = [args[0]]
+    else:
+        clean = []
+    return function, json.dumps(clean)
+```
+
+### FILE: ui.py :: ViewerBridge ###
+
+```python
+class ViewerBridge(QObject):
+    """QWebChannel object exposed to viewer.js as `bridge` (hover and 3D events)."""
+
+    hoverChanged = pyqtSignal(str, str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+    @pyqtSlot(str, str)
+    def onHover(self, name: str, text: str) -> None:
+        from core.viewer3d import sanitize_hover
+        hover = sanitize_hover(name, text)
+        if hover is not None:
+            self.hoverChanged.emit(hover["name"], hover["text"])
+```
+
+### FILE: ui.py :: _SysMetrics ###
+
+```python
+class _SysMetrics:
+    def __init__(self):
+        self.cpu  = 0.0
+        self.mem  = 0.0
+        self.net  = 0.0   
+        self.gpu  = -1.0  
+        self.tmp  = -1.0  
+        self._lock = threading.Lock()
+        self._last_net = psutil.net_io_counters()
+        self._last_net_t = time.time()
+        self._running = True
+        self._pynvml = None
+        self._nv_handle = None
+        self._nv_lib = None
+        self._nv_lib_failed = False
+        try:
+            import pynvml  # type: ignore
+            pynvml.nvmlInit()
+            self._nv_handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+            self._pynvml = pynvml
+        except Exception:
+            self._pynvml = None
+            self._nv_handle = None
+        self._thread = threading.Thread(target=self._loop, daemon=True)
+        self._thread.start()
+
+    def _loop(self):
+        while self._running:
+            try:
+                self._update()
+            except Exception:
+                pass
+            time.sleep(1.5)
+
+    def close(self):
+        """Stop the sampling thread and release NVML (idempotent)."""
+        self._running = False
+        thread = getattr(self, "_thread", None)
+        if thread is not None and thread.is_alive() and thread is not threading.current_thread():
+            thread.join(timeout=2.0)
+        if self._pynvml is not None:
+            try:
+                self._pynvml.nvmlShutdown()
+            except Exception:
+                pass
+            self._pynvml = None
+            self._nv_handle = None
+
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
+
+    def _update(self):
+        cpu = psutil.cpu_percent(interval=None)
+        mem = psutil.virtual_memory().percent
+
+        nc  = psutil.net_io_counters()
+        now = time.time()
+        dt  = now - self._last_net_t
+        if dt > 0:
+            sent = (nc.bytes_sent - self._last_net.bytes_sent) / dt
+            recv = (nc.bytes_recv - self._last_net.bytes_recv) / dt
+            net  = (sent + recv) / (1024 * 1024)
+        else:
+            net = 0.0
+        self._last_net   = nc
+        self._last_net_t = now
+
+        gpu = self._get_gpu()
+
+        tmp = self._get_temp()
+
+        with self._lock:
+            self.cpu = cpu
+            self.mem = mem
+            self.net = net
+            self.gpu = gpu
+            self.tmp = tmp
+
+    def _get_gpu(self) -> float:
+        # pynvml — subprocess-free, works on all platforms if installed
+        if self._pynvml is not None and self._nv_handle is not None:
+            try:
+                return float(self._pynvml.nvmlDeviceGetUtilizationRates(self._nv_handle).gpu)
+            except Exception:
+                pass
+
+        # Windows: nvml.dll via ctypes (already cached in _nvml_gpu_windows)
+        if _OS == "Windows":
+            return _nvml_gpu_windows()
+
+        if self._nv_lib_failed:
+            return -1.0
+
+        # Linux / macOS: libnvidia-ml shared lib via ctypes (initialised once)
+        try:
+            import ctypes
+            _lib = "libnvidia-ml.so.1" if _OS == "Linux" else "libnvidia-ml.dylib"
+
+            class _Util(ctypes.Structure):
+                _fields_ = [("gpu", ctypes.c_uint), ("memory", ctypes.c_uint)]
+
+            if self._nv_lib is None:
+                self._nv_lib = ctypes.CDLL(_lib)
+                self._nv_lib.nvmlInit_v2()
+            nv = self._nv_lib
+            dev = ctypes.c_void_p()
+            nv.nvmlDeviceGetHandleByIndex_v2(0, ctypes.byref(dev))
+            u = _Util()
+            nv.nvmlDeviceGetUtilizationRates(dev, ctypes.byref(u))
+        except Exception:
+            self._nv_lib_failed = True
+
+        return -1.0   # N/A — zero subprocess on all platforms
+
+    def _get_temp(self) -> float:
+        # psutil — works on Linux; occasionally Windows with driver support
+        try:
+            temps = psutil.sensors_temperatures()
+            for name in ["coretemp", "k10temp", "cpu_thermal", "acpitz",
+                         "cpu-thermal", "zenpower", "it8688"]:
+                if name in temps and temps[name]:
+                    return temps[name][0].current
+            for entries in temps.values():
+                if entries:
+                    return entries[0].current
+        except Exception:
+            pass
+
+        # Windows: wmi module (pure Python COM, zero subprocess)
+        if _OS == "Windows":
+            try:
+                import wmi  # type: ignore
+                w = wmi.WMI(namespace="root/wmi")
+                tz = w.MSAcpi_ThermalZoneTemperature()
+                if tz:
+                    return (tz[0].CurrentTemperature / 10.0) - 273.15
+            except Exception:
+                pass
+
+        return -1.0   # N/A — zero subprocess on all platforms
+
+    def snapshot(self) -> dict:
+        with self._lock:
+            return {
+                "cpu": self.cpu,
+                "mem": self.mem,
+                "net": self.net,
+                "gpu": self.gpu,
+                "tmp": self.tmp,
+            }
+```
+
+### FILE: ui.py :: HudCanvas ###
+
+```python
+class HudCanvas(QWidget):
+    def __init__(self, face_path: str, assistant_name: str = "J.A.R.V.I.S", parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
+        self.setMinimumSize(300, 300)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+        self.muted    = False
+        self.speaking = False
+        self.state    = "INITIALISING"
+        self.motion_state = "idle"
+        self.reduced_motion = os.environ.get("JARVIS_REDUCED_MOTION") == "1"
+        self._error_started: float | None = None
+        self._error_flash = 0.0
+        self._assistant_name = assistant_name
+
+        self._tick       = 0
+        self._scale      = 1.0
+        self._tgt_scale  = 1.0
+        self._halo       = 55.0
+        self._tgt_halo   = 55.0
+        self._last_t     = time.monotonic()
+        self._scan       = 0.0
+        self._scan2      = 180.0
+        self._rings      = [0.0, 120.0, 240.0]
+        self._pulses: list[float] = [0.0, 50.0, 100.0]
+        self._blink      = True
+        self._blink_tick = 0
+        self._particles: list[list[float]] = []
+        self._face_px: QPixmap | None = None
+        self._static_px: QPixmap | None = None
+        self._static_key: tuple | None = None
+        self._load_face(face_path)
+        self._last_step_t = time.monotonic()
+
+        # Live audio reactivity: _live_amp is written from the audio threads
+        # (0.0–1.0), _amp_disp is the smoothed value the paint code reads.
+        self._live_amp  = 0.0
+        self._amp_disp  = 0.0
+        self._base_scale = 1.0    # slow "breathing" target; amp is added per-frame
+        self._base_halo  = 55.0
+
+        self._frame = 0
+        try:
+            fps = float(os.environ.get("JARVIS_UI_FPS", "30"))
+        except ValueError:
+            fps = 30.0
+        self._paint_every = 1 if self.reduced_motion else max(1, round(60 / max(1.0, fps)))
+        self._tmr = QTimer(self)
+        self._tmr.timeout.connect(self._step)
+        self._tmr.start(33 if self.reduced_motion else 17)
+
+    def set_jarvis_state(self, state: str) -> None:
+        normalized = state.strip().lower()
+        if normalized not in _JARVIS_VISUAL_STATES:
+            raise ValueError(f"Unsupported JARVIS visual state: {state}")
+        if normalized == "error" or normalized != self.motion_state:
+            self._error_started = (
+                time.monotonic() if normalized == "error" else None
+            )
+            self._error_flash = 0.0
+        self.motion_state = normalized
+
+    def stop_animations(self) -> None:
+        self._tmr.stop()
+
+    def closeEvent(self, event) -> None:
+        self.stop_animations()
+        super().closeEvent(event)
+
+    def set_audio_level(self, level: float) -> None:
+        """Thread-safe entry point for the audio threads. Stores the louder of
+        the incoming level and the current value so brief gaps between chunks
+        don't make the waveform stutter; _step() decays it back down."""
+        try:
+            lv = float(level)
+        except (TypeError, ValueError):
+            return
+        if lv < 0.0:
+            lv = 0.0
+        elif lv > 1.0:
+            lv = 1.0
+        if lv > self._live_amp:
+            self._live_amp = lv
+
+    def _load_face(self, path: str):
+        try:
+            from PIL import Image, ImageDraw
+            import io
+            img = Image.open(path).convert("RGBA")
+            sz  = min(img.size)
+            img = img.resize((sz, sz), Image.LANCZOS)
+            mk  = Image.new("L", (sz, sz), 0)
+            ImageDraw.Draw(mk).ellipse((2, 2, sz - 2, sz - 2), fill=255)
+            img.putalpha(mk)
+            buf = io.BytesIO()
+            img.save(buf, format="PNG")
+            px = QPixmap(); px.loadFromData(buf.getvalue())
+            self._face_px = px
+        except Exception:
+            self._face_px = None
+
+    def _step(self):
+        if not self.reduced_motion:
+            self._tick += 1
+        now = time.monotonic()
+
+        # ── Live audio reactivity ────────────────────────────────────────────
+        # Audio threads push peaks into _live_amp; decay it toward silence so
+        # gaps between chunks fade out instead of freezing, then smooth it.
+        self._live_amp *= 0.86
+        self._amp_disp += (self._live_amp - self._amp_disp) * 0.45
+        amp = self._amp_disp
+        
+        dt = now - getattr(self, '_last_step_t', now)
+        self._last_step_t = now
+
+        # Slow "breathing" base target (random shimmer), refreshed on a timer.
+        if not self.reduced_motion and now - self._last_t > (
+            0.12 if self.speaking else 0.5
+        ):
+            if self.speaking:
+                self._base_scale = 1.03
+                self._base_halo  = 122.0
+            elif self.muted:
+                self._base_scale = random.uniform(0.998, 1.002)
+                self._base_halo  = random.uniform(15, 28)
+            else:
+                self._base_scale = random.uniform(1.001, 1.008)
+                self._base_halo  = random.uniform(48, 68)
+            self._last_t = now
+
+        # Every frame, the live audio level lifts the target on top of the base
+        # — this is what makes the core visibly pulse to the actual voice.
+        if self.muted:
+            self._tgt_scale, self._tgt_halo = self._base_scale, self._base_halo
+        elif self.speaking:
+            self._tgt_scale = self._base_scale + amp * 0.13
+            self._tgt_halo  = self._base_halo  + amp * 95.0
+        else:
+            self._tgt_scale = self._base_scale + amp * 0.06
+            self._tgt_halo  = self._base_halo  + amp * 75.0
+        if self.motion_state == "error":
+            elapsed = now - (self._error_started or now)
+            self._error_flash = (
+                0.5 + 0.5 * math.sin(elapsed * math.tau * 2.5)
+                if elapsed < 0.8 and not self.reduced_motion
+                else 0.0
+            )
+            self._tgt_halo = self._base_halo + 45.0 * self._error_flash
+
+        sp = 0.38 if self.speaking else (0.30 if amp > 0.02 else 0.15)
+        self._scale += (self._tgt_scale - self._scale) * sp
+        self._halo  += (self._tgt_halo  - self._halo)  * sp
+
+        if not self.reduced_motion:
+            boost = 1.0 + amp * 1.6
+            if self.motion_state == "thinking":
+                speeds = [1.5, -1.1, 2.1]
+            elif self.speaking:
+                speeds = [1.3, -0.9, 2.0]
+            else:
+                speeds = [0.55, -0.35, 0.9]
+            for i, speed in enumerate(speeds):
+                self._rings[i] = (self._rings[i] + speed * boost) % 360
+
+            self._scan = (
+                self._scan + (3.0 if self.speaking else 1.3) * boost
+            ) % 360
+            self._scan2 = (
+                self._scan2 + (-2.0 if self.speaking else -0.75) * boost
+            ) % 360
+
+            fw = min(self.width(), self.height())
+            lim = fw * 0.74
+            pulse_speed = 4.2 if self.speaking else 2.0
+            self._pulses = [
+                radius + pulse_speed
+                for radius in self._pulses
+                if radius + pulse_speed < lim
+            ]
+            if len(self._pulses) < 3 and random.random() < (
+                0.07 if self.speaking else 0.025
+            ):
+                self._pulses.append(0.0)
+
+            if self.speaking and random.random() < 0.28:
+                cx, cy = self.width() / 2, self.height() / 2
+                angle = random.uniform(0, 2 * math.pi)
+                start_radius = fw * 0.28
+                self._particles.append([
+                    cx + math.cos(angle) * start_radius,
+                    cy + math.sin(angle) * start_radius,
+                    math.cos(angle) * random.uniform(0.9, 2.4),
+                    math.sin(angle) * random.uniform(0.9, 2.4) - 0.4,
+                    1.0,
+                ])
+            self._particles = [
+                [
+                    particle[0] + particle[2],
+                    particle[1] + particle[3],
+                    particle[2] * 0.97,
+                    particle[3] * 0.97,
+                    particle[4] - 0.028,
+                ]
+                for particle in self._particles
+                if particle[4] > 0
+            ]
+
+            self._blink_tick += 1
+            if self._blink_tick >= 38:
+                self._blink = not self._blink
+                self._blink_tick = 0
+        else:
+            self._pulses.clear()
+            self._particles.clear()
+        # Logic stays at 60 Hz so motion speed is unchanged; only repaints are capped (default 30 fps).
+        self._frame += 1
+        if self._frame % self._paint_every == 0:
+            self.update()
+
+    def _rebuild_static_cache(self, W: int, H: int, fw: int, state_color: str, dpr: float) -> None:
+        cx, cy = W / 2, H / 2
+        px = QPixmap(max(1, int(W * dpr)), max(1, int(H * dpr)))
+        px.setDevicePixelRatio(dpr)
+        c = QPainter(px)
+        c.setRenderHint(QPainter.RenderHint.Antialiasing)
+        background = QLinearGradient(0, 0, W, H)
+        background.setColorAt(0.0, qcol(C.BG))
+        background.setColorAt(0.52, qcol(C.DARK))
+        background.setColorAt(1.0, qcol(C.BG))
+        c.fillRect(QRectF(0, 0, W, H), QBrush(background))
+
+        c.setPen(QPen(qcol(C.PRI_GHO), 1))
+        for x in range(0, W, 48):
+            for y in range(0, H, 48):
+                c.drawPoint(x, y)
+
+        t_out, t_in = fw * 0.497, fw * 0.474
+        c.setPen(QPen(qcol(state_color, 140), 1))
+        for deg in range(0, 360, 10):
+            rad = math.radians(deg)
+            inn = t_in if deg % 30 == 0 else t_in + 6
+            c.drawLine(
+                QPointF(cx + t_out * math.cos(rad), cy - t_out * math.sin(rad)),
+                QPointF(cx + inn  * math.cos(rad), cy - inn  * math.sin(rad)),
+            )
+
+        ch_r, gap_h = fw * 0.51, fw * 0.16
+        c.setPen(QPen(qcol(state_color, 40), 1))
+        c.drawLine(QPointF(cx - ch_r, cy), QPointF(cx - gap_h, cy))
+        c.drawLine(QPointF(cx + gap_h, cy), QPointF(cx + ch_r, cy))
+        c.drawLine(QPointF(cx, cy - ch_r), QPointF(cx, cy - gap_h))
+        c.drawLine(QPointF(cx, cy + gap_h), QPointF(cx, cy + ch_r))
+
+        bl = 24
+        hl, hr = cx - fw // 2, cx + fw // 2
+        ht, hb = cy - fw // 2, cy + fw // 2
+        c.setPen(QPen(qcol(state_color, 210), 2))
+        for bx, by, dx, dy in [(hl,ht,1,1),(hr,ht,-1,1),(hl,hb,1,-1),(hr,hb,-1,-1)]:
+            c.drawLine(QPointF(bx, by), QPointF(bx + dx * bl, by))
+            c.drawLine(QPointF(bx, by), QPointF(bx, by + dy * bl))
+        c.end()
+        self._static_px = px
+        self._static_key = (W, H, state_color, dpr)
+
+    def hideEvent(self, e):
+        self._tmr.stop()
+        super().hideEvent(e)
+
+    def showEvent(self, e):
+        if not self._tmr.isActive():
+            self._last_step_t = time.monotonic()
+            self._tmr.start(33 if self.reduced_motion else 17)
+        super().showEvent(e)
+
+    def paintEvent(self, _):
+        p = QPainter(self)
+        if not p.isActive():      # device not ready (e.g. 0-size during layout) — skip cleanly
+            return
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        W, H = self.width(), self.height()
+        cx, cy = W / 2, H / 2
+        fw = min(W, H)
+        if self.motion_state == "error":
+            state_color = C.ACC if self._error_flash > 0.7 else C.RED
+        else:
+            state_color = {
+                "listening": C.GREEN,
+                "thinking": C.ACC2,
+                "speaking": C.ACC,
+            }.get(self.motion_state, C.PRI)
+        accent_color = C.MUTED_C if self.muted else state_color
+
+        dpr = self.devicePixelRatioF()
+        if self._static_px is None or self._static_key != (W, H, state_color, dpr):
+            self._rebuild_static_cache(W, H, fw, state_color, dpr)
+        p.drawPixmap(0, 0, self._static_px)
+
+        r_face = fw * 0.31
+
+        # halo glow: single radial gradient instead of stacked ellipses
+        halo_r = r_face * 1.8
+        halo_a = max(0, min(255, int(self._halo * 0.85)))
+        glow = QRadialGradient(QPointF(cx, cy), halo_r)
+        glow.setColorAt(0.0, qcol(accent_color, 0))
+        glow.setColorAt(0.55, qcol(accent_color, 0))
+        glow.setColorAt(0.8, qcol(accent_color, halo_a // 3))
+        glow.setColorAt(1.0, qcol(accent_color, 0))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QBrush(glow))
+        p.drawEllipse(QRectF(cx - halo_r, cy - halo_r, halo_r * 2, halo_r * 2))
+
+        # pulse rings
+        for pr in self._pulses:
+            a   = max(0, int(230 * (1.0 - pr / (fw * 0.74))))
+            col = qcol(accent_color, a)
+            p.setPen(QPen(col, 1.5)); p.setBrush(Qt.BrushStyle.NoBrush)
+            p.drawEllipse(QRectF(cx - pr, cy - pr, pr * 2, pr * 2))
+
+        # spinning arc rings
+        for idx, (r_frac, w_r, arc_l, gap) in enumerate(
+            [(0.48, 3, 115, 78), (0.40, 2, 78, 55), (0.32, 1, 56, 40)]
+        ):
+            ring_r = fw * r_frac
+            base   = self._rings[idx]
+            a_val  = max(0, min(255, int(self._halo * (1.0 - idx * 0.18))))
+            col    = qcol(accent_color, a_val)
+            p.setPen(QPen(col, w_r)); p.setBrush(Qt.BrushStyle.NoBrush)
+            angle = base
+            rect  = QRectF(cx - ring_r, cy - ring_r, ring_r * 2, ring_r * 2)
+            while angle < base + 360:
+                p.drawArc(rect, int(angle * 16), int(arc_l * 16))
+                angle += arc_l + gap
+
+        # scanners
+        sr = fw * 0.50
+        sa = min(255, int(self._halo * 1.5))
+        ex = 75 if self.speaking else 44
+        p.setPen(QPen(qcol(accent_color, sa), 2.5))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        srect = QRectF(cx - sr, cy - sr, sr * 2, sr * 2)
+        p.drawArc(srect, int(self._scan * 16), int(ex * 16))
+        p.setPen(QPen(qcol(C.ACC, sa // 2), 1.5))
+        p.drawArc(srect, int(self._scan2 * 16), int(ex * 16))
+
+        # tick marks, crosshair and corner brackets live in the static cache
+
+        # particles
+        for pt in self._particles:
+            a = max(0, min(255, int(pt[4] * 255)))
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QBrush(qcol(C.PRI, a)))
+            p.drawEllipse(QPointF(pt[0], pt[1]), 2.5, 2.5)
+
+        # status text
+        sy = cy + fw * 0.40
+        if self.muted:
+            txt, col = "⊘  MUTED",     qcol(C.MUTED_C)
+        elif self.speaking:
+            txt, col = "●  SPEAKING",  qcol(C.ACC)
+        elif self.motion_state == "error":
+            txt, col = "⚠  ERROR", qcol(state_color)
+        elif self.state == "PROCESSING":
+            sym = "▷" if self._blink else "▶"
+            txt, col = f"{sym}  PROCESSING", qcol(C.ACC2)
+        elif self.motion_state == "thinking":
+            sym = "◈" if self._blink else "◇"
+            txt, col = f"{sym}  THINKING",   qcol(C.ACC2)
+        elif self.motion_state == "listening":
+            sym = "●" if self._blink else "○"
+            txt, col = f"{sym}  LISTENING",  qcol(C.GREEN)
+        elif self.motion_state == "speaking":
+            txt, col = "●  SPEAKING", qcol(C.ACC)
+        else:
+            sym = "●" if self._blink else "○"
+            txt, col = f"{sym}  {self.state}", qcol(state_color)
+
+        p.setPen(QPen(col, 1))
+        p.setFont(QFont("Courier New", 11, QFont.Weight.Bold))
+        p.drawText(QRectF(0, sy, W, 26), Qt.AlignmentFlag.AlignCenter, txt)
+
+        # waveform — reacts to the real audio level (mic while listening,
+        # JARVIS's own voice while speaking). Falls back to a gentle idle
+        # ripple when there's no sound. _amp_disp is the smoothed 0–1 level.
+        wy = sy + 30
+        N, bw = 36, 8
+        wx0 = (W - N * bw) / 2
+        amp = self._amp_disp
+        mid = (N - 1) / 2.0
+        for i in range(N):
+            if self.muted:
+                hgt, cl = 2, qcol(C.MUTED_C)
+            else:
+                env     = (1.0 - abs(i - mid) / mid) ** 0.7      # center-weighted hump
+                shimmer = 0.55 + 0.45 * math.sin(self._tick * 0.18 + i * 0.7)
+                idle    = 3.0 + 2.0 * math.sin(self._tick * 0.09 + i * 0.6)
+                hgt     = int(max(2, min(24, idle + amp * 22.0 * env * shimmer)))
+                if amp > 0.05:
+                    cl = qcol(state_color) if hgt > 12 else qcol(C.PRI_DIM)
+                else:
+                    cl = qcol(C.BORDER_B)
+            p.fillRect(QRectF(wx0 + i * bw, wy + 20 - hgt, bw - 1, hgt), cl)
+
+        p.end()   # end deterministically so the backing store never flushes an active painter
+```

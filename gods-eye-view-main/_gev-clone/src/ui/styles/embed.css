@@ -1,0 +1,165 @@
+/* Embed mode (?embed=1): the globe alone, on top of clean view. Provider
+   attribution stays visible. */
+body.ui-embed #clean-view-exit,
+body.ui-embed #intel-hud,
+body.ui-embed #key-setup-chip,
+body.ui-embed #key-setup,
+body.ui-embed #first-run-launcher,
+body.ui-embed #command-dock,
+body.ui-embed #left-panel-stack,
+body.ui-embed #right-context-rail,
+body.ui-embed #world-overlay-actions,
+body.ui-embed #view-switcher {
+  display: none !important;
+}
+
+/* The Jarvis panel surface restores the app controls, but never GEV voice or
+   provider setup. The UI mode is separate from the embed message bridge. */
+body.ui-embed-panels #left-panel-stack,
+body.ui-embed-panels #right-context-rail,
+body.ui-embed-panels #view-switcher {
+  display: flex !important;
+}
+
+body.ui-embed-panels #command-dock {
+  display: grid !important;
+  grid-template-areas: 'locations presets';
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+body.ui-embed-panels #gev-voice-control,
+body.ui-embed-panels #scope-mask {
+  display: none !important;
+}
+
+body.ui-embed-panels
+  #command-dock:has(#location-bar:not(.collapsed)),
+body.ui-embed-panels
+  #command-dock:has(#control-panel:not(.collapsed)) {
+  transform: translateX(-50%);
+}
+
+body.ui-embed-panels #command-dock > #location-bar,
+body.ui-embed-panels #command-dock > #control-panel {
+  flex-basis: auto;
+  width: auto;
+}
+
+body.ui-embed-panels #command-dock .location-toolbar-label,
+body.ui-embed-panels #command-dock .panel-title {
+  max-width: none;
+  overflow: visible;
+}
+
+body.ui-embed-panels #cockpit-cloud-effects {
+  clip-path: none;
+}
+
+body.ui-embed-panels {
+  --panel-surface-font: var(--font-sans);
+  --panel-surface-shadow:
+    0 14px 36px rgba(0, 0, 0, 0.48),
+    0 0 24px rgba(0, 212, 255, 0.08);
+  --panel-surface-title: #7eeeff;
+}
+
+body.ui-embed-panels
+  :is([data-panel-surface], [data-panel-popup]) {
+  border-color: rgba(0, 212, 255, 0.2);
+  border-radius: 14px;
+  backdrop-filter: blur(16px) saturate(135%);
+  transition:
+    border-color var(--transition-fast),
+    box-shadow var(--transition-smooth),
+    background-color var(--transition-smooth);
+}
+
+body.ui-embed-panels [data-panel-header] {
+  min-height: 34px;
+  padding-bottom: 10px;
+}
+
+body.ui-embed-panels .panel-surface-title {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+}
+
+body.ui-embed-panels [data-panel-surface]:hover,
+body.ui-embed-panels [data-panel-popup]:hover {
+  border-color: rgba(0, 212, 255, 0.36);
+}
+
+body.ui-embed-panels .panel-surface-control {
+  transition:
+    border-color var(--transition-fast),
+    background-color var(--transition-fast),
+    box-shadow var(--transition-fast);
+}
+
+body.ui-embed-panels .panel-surface-control:focus-visible {
+  outline-color: var(--accent);
+  box-shadow: 0 0 14px rgba(0, 212, 255, 0.16);
+}
+
+@media (max-height: 820px) {
+  body.ui-embed-panels {
+    --left-stack-x: 12px;
+    --left-stack-top: 8vh;
+    --left-stack-gap: 36px;
+    --right-rail-x: 12px;
+  }
+
+  body.ui-embed-panels #left-panel-stack > #data-panel,
+  body.ui-embed-panels #left-panel-stack > #data-panel.collapsed {
+    width: min(280px, calc(100vw - 32px));
+  }
+
+  body.ui-embed-panels .data-panel-inner {
+    max-height: min(52vh, calc(100vh - 150px));
+  }
+
+  body.ui-embed-panels #right-context-rail {
+    width: min(290px, calc(100vw - 32px));
+    overflow-y: auto;
+  }
+
+  body.ui-embed-panels #command-dock {
+    --dock-side-compact: clamp(8rem, 18vw, 10rem);
+    --dock-location-open: min(34vw, 18rem);
+    --dock-presets-open: min(34vw, 18rem);
+    width: calc(100vw - 24px);
+    max-width: 900px;
+  }
+
+  body.ui-embed-panels #command-dock > #location-bar,
+  body.ui-embed-panels #command-dock > #control-panel {
+    max-height: min(42vh, 340px);
+    overflow: visible;
+  }
+
+  body.ui-embed-panels #command-dock > #location-bar .dock-popover-content,
+  body.ui-embed-panels #command-dock > #control-panel .dock-popover-content {
+    max-height: min(42vh, 340px);
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+}
+
+@media (max-width: 900px) {
+  body.ui-embed-panels #command-dock {
+    --dock-side-compact: 4.25rem;
+    --dock-location-open: calc(100vw - 1.5rem);
+    --dock-presets-open: calc(100vw - 1.5rem);
+    --dock-popover-mobile-width: calc(100vw - 1.5rem);
+  }
+
+  body.ui-embed-panels #command-dock #location-bar .dock-popover-content {
+    left: 0;
+    right: auto;
+  }
+
+  body.ui-embed-panels #command-dock #control-panel .dock-popover-content {
+    right: 0;
+    left: auto;
+  }
+}

@@ -1,0 +1,40 @@
+QMainWindow#jarvisMainWindow,
+QWidget#jarvisCentralWidget {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 1, y2: 1,
+        stop: 0 @BG@,
+        stop: 0.52 @DARK@,
+        stop: 1 @BG@
+    );
+    color: @TEXT@;
+}
+
+QPushButton {
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 0, y2: 1,
+        stop: 0 @PANEL2@,
+        stop: 1 @DARK@
+    );
+    border: 1px solid @PRI_DIM@;
+    border-radius: 4px;
+    color: @TEXT@;
+    padding: 6px 16px;
+    font-family: "Courier New";
+    font-weight: bold;
+}
+
+QPushButton:hover {
+    border: 1px solid @PRI@;
+    background: qlineargradient(
+        x1: 0, y1: 0, x2: 0, y2: 1,
+        stop: 0 @PANEL2@,
+        stop: 1 @PRI_DIM@
+    );
+    color: @WHITE@;
+}
+
+QPushButton:pressed {
+    border: 1px solid @WHITE@;
+    background: @PRI@;
+    color: @DARK@;
+}

@@ -1,0 +1,10 @@
+Rapier 3D physics engine
+Package: @dimforge/rapier3d-compat 0.19.3
+Copyright: Rapier contributors
+License: Apache-2.0
+License text: https://www.apache.org/licenses/LICENSE-2.0
+Source: https://github.com/dimforge/rapier.js
+
+The generated viewer bundle includes Rapier's WebAssembly module inlined by
+the compatibility package. The package is pinned in package.json and
+package-lock.json; no network access is required at runtime.

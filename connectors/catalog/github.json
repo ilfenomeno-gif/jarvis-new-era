@@ -1,0 +1,13 @@
+{
+  "id": "github",
+  "name": "GitHub",
+  "type": "remote-mcp",
+  "transport": "streamable-http",
+  "auth": "oauth2",
+  "endpoint": "https://api.githubcopilot.com/mcp/",
+  "scopes": ["repo.read", "issues.write"],
+  "tool_refs": {
+    "github.search_repositories": "repo.read",
+    "github.create_issue": "issues.write"
+  }
+}
