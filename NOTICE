@@ -1,0 +1,39 @@
+# NOTICE — Attribuzioni e licenze
+
+JARVIS VII è un'opera derivata per **uso personale / non commerciale**.
+
+## Componenti e licenze
+
+| Componente | Autore | Licenza | Obblighi |
+|---|---|---|---|
+| App JARVIS (base `Mark-LIV-main` da `ilfenomeno-gif/jarvis-new-gen`) | FatihMakes | **CC BY-NC 4.0** | Attribuzione; **no uso commerciale**; indicare le modifiche |
+| `providers/`, `core/outcome.py`, dashboard HTTPS, avatar (da `FatihMakes/Mark-LVI`) | FatihMakes | **CC BY-NC 4.0** | Attribuzione; no uso commerciale; indicare le modifiche |
+| God's Eye View (`gods-eye-view-main/_gev-clone`) | Bilawal Sidhu | **MIT** (con note) | Notice |
+| ASTRALIS | (vedi `astralis/LICENSE`) | **Apache-2.0** | Notice + stato modifiche |
+| Three.js 0.186.1, Rapier 0.19.3 (viewer 3D) | rispettivi autori | MIT / Apache-2.0 | Notice |
+
+Testi completi: `LICENSE` (CC BY-NC 4.0), `astralis/LICENSE`, `gods-eye-view-main/_gev-clone/LICENSE`,
+`assets/viewer3d/licenses/`.
+
+## Modifiche apportate (JARVIS VII)
+
+- Porting da Mark-LVI: `providers/`, `core/outcome.py`, sezione provider di `memory/config_manager.py`,
+  dashboard HTTPS+AES-GCM, avatar olografico (opt-in `hud_style`).
+- Nuovo: `actions/n8n_bridge.py` (bridge n8n Cloud), `core/n8n_outbox.py` (polling eventi),
+  `core/plugin_sandbox.py` + `core/_plugin_sandbox_worker.py` (sandbox plugin).
+- `core/guardrails.py`: pattern di redaction estesi (JWT, AWS, Bearer, GitHub PAT).
+- `core/action_loader.py`: aggiunti `META_KEYS`/`strip_meta`.
+- `core/tool_router.py`: mapping del tool `n8n_bridge`.
+- `main.py`: engine layer (modalità `gemini`/`pipeline` con fallback a Gemini Live), avvio outbox n8n.
+- Test: `test_p1_porting.py`, `test_n8n_bridge.py`, `test_n8n_outbox.py`, `test_plugin_sandbox.py`,
+  `test_redaction.py`, `test_p5_avatar_skills.py`.
+
+## Esclusioni
+
+- **`jarvis-vscode-extension` NON è inclusa né riusata**: nel repository di origine non dichiara una licenza.
+- Il branch `diagnosi-qt-20261101` di `jarvis-new-gen` non è integrato.
+
+## Segreti
+
+Nessun segreto è committato. Le chiavi (Gemini, webhook n8n, connettori) vivono solo nel
+SecretStore DPAPI (`config/secrets.json`, cifrato per-utente Windows) o in file locali ignorati da git.
