@@ -16,7 +16,10 @@ class _Player:
 
 def test_hud_html_has_top_view_humanoid_scale():
     html = (Path("core") / "jarvis_hud.html").read_text(encoding="utf-8")
-    assert '<body class="mira-mode">' in html
+    assert '<body class="mira-mode chat-only">' in html
+    assert 'body.chat-only .hud>*:not(#info){display:none!important}' in html
+    assert 'body.chat-only #tabs,body.chat-only #dati,body.chat-only #sistema,body.chat-only #tr{display:none!important}' in html
+    assert 'e.key==="F2"&&visualMode==="mira"' in html
     assert 'id="humanoidFrame"' in html
     assert 'src="https://mira-humanoid.vercel.app/"' in html
     assert 'id="mapview"' in html

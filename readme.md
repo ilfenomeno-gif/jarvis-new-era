@@ -23,11 +23,12 @@ Assistente desktop AI personale (Windows-first), fusione di:
 | UI Mira + HUD | Mira Humanoid è la visuale iniziale; chat, metriche, tab SISTEMA, tour e comandi restano nell'overlay; `MAPPA 3D` riapre la scena Three.js | `core/jarvis_hud.html`, `actions/hud_control.py` |
 | Avatar desktop nativo | opt-in via `hud_style="face"` (default `core` invariato), indipendente dall'iframe Mira | `ui.py`, `core/avatar.py` |
 
-Mira è incorporata dal sito esterno `https://mira-humanoid.vercel.app/`. I controlli
-propri della pagina (stati, audio, microfono e camera) restano interattivi nell'iframe.
-L'iframe è cross-origin: la HUD non può comandare né sincronizzare internamente gli
-stati di Mira senza un'API supportata dal sito. Camera e microfono dipendono dai
-permessi del browser e del sistema operativo; non vengono attivati dal bridge Jarvis.
+Mira è incorporata dal sito esterno `https://mira-humanoid.vercel.app/`; all'avvio resta
+visibile solo la chat Jarvis, mentre F2 alterna la HUD completa. L'iframe è cross-origin:
+la HUD non può premere automaticamente il pulsante ENTER né sincronizzare gli stati
+interni di Mira senza un'API supportata dal sito. ENTER richiede un gesto utente per
+avviare l'audio; i controlli Mira restano utilizzabili direttamente nell'iframe. Camera
+e microfono dipendono dai permessi del browser e del sistema operativo.
 
 ## Stato dei test
 

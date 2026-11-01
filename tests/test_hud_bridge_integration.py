@@ -148,7 +148,7 @@ def test_bridge_serves_hud_forwards_chat_and_releases_port():
             assert response.status == 200
             html = response.read()
             assert b"JARVIS VII" in html
-            assert b'<body class="mira-mode">' in html
+            assert b'<body class="mira-mode chat-only">' in html
             assert b'src="https://mira-humanoid.vercel.app/"' in html
 
         payload = json.dumps({"text": "  ciao  "}).encode()
