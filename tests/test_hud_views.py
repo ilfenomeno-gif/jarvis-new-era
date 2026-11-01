@@ -1,4 +1,4 @@
-"""Tests for the original map HUD, Mira reveal phrase, top view, and layout scale."""
+"""Tests for the original map HUD, Iris reveal phrase, top view, and layout scale."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -37,7 +37,7 @@ def test_hud_html_has_top_view_humanoid_scale():
     assert 'function pick(id,open=true){if(open)setVisualMode("map")' in html
     assert 'function openSystem(id,tr){if(!tr&&touring)' in html and \
            'setVisualMode("map");if((id||"main")===view)' in html
-    assert 'Mira rivelata — umanoide attivo.' in html
+    assert 'Iris rivelata — umanoide attiva.' in html
     # top view
     assert 'id="topview"' in html
     assert "setTopView" in html
@@ -77,7 +77,7 @@ def test_hud_control_new_actions_in_contract():
 
 
 def test_rivelati_phrase_routes_to_reveal():
-    """The spoken phrase "Mira rivelati" triggers the reveal command."""
+    """The spoken phrase "Iris rivelati" triggers the reveal command."""
     import main as main_module
     import inspect
     text_src = inspect.getsource(main_module.JarvisLive._on_text_command)
@@ -88,12 +88,12 @@ def test_rivelati_phrase_routes_to_reveal():
     assert "_set_hud_humanoid_visible" in voice_src
 
 
-def test_hud_visibility_phrase_requires_exact_mira_command():
+def test_hud_visibility_phrase_requires_exact_iris_command():
     from main import JarvisLive
 
-    assert JarvisLive._hud_visibility_request("Mira rivelati!") is True
-    assert JarvisLive._hud_visibility_request("  MIRA   RIVELATI  ") is True
-    assert JarvisLive._hud_visibility_request("Mira nasconditi.") is False
-    assert JarvisLive._hud_visibility_request("Jarvis rivelati") is None
+    assert JarvisLive._hud_visibility_request("Iris rivelati!") is True
+    assert JarvisLive._hud_visibility_request("  IRIS   RIVELATI  ") is True
+    assert JarvisLive._hud_visibility_request("Iris nasconditi.") is False
+    assert JarvisLive._hud_visibility_request("Mira rivelati") is None
     assert JarvisLive._hud_visibility_request("rivelati nella scena") is None
     assert JarvisLive._hud_visibility_request("Puoi rivelarti?") is None

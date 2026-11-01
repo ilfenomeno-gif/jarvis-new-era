@@ -106,7 +106,7 @@ body::after{content:"";position:fixed;inset:0;z-index:4;pointer-events:none;back
 <canvas id="gl" aria-label="Mappa 3D di JARVIS"></canvas>
 <div id="tags"></div>
 <div class="hud">
- <header class="panel"><h1>JARVIS VII · MIRA</h1><small>Mira come visuale principale · chat, sistemi, metriche e mappa 3D restano disponibili</small><div id="clock">--:--:--</div></header>
+ <header class="panel"><h1>JARVIS VII · IRIS</h1><small>Iris disponibile su richiesta · chat, sistemi, metriche e mappa 3D restano disponibili</small><div id="clock">--:--:--</div></header>
  <div id="left" class="panel"><div id="gauges"></div><ul id="list" aria-label="Pianeti"></ul></div>
  <div></div>
  <aside id="info" class="panel"><nav id="tabs"><button class="on" data-t="chat">CHAT</button><button data-t="dati">DATI</button><button data-t="sistema">SISTEMA</button></nav><div id="chat" class="tv"><div id="msgs"></div><div id="inrow"><input id="q" placeholder="Chiedi a JARVIS…" autocomplete="off"><button id="send">▶</button></div><div id="tr"><span id="trt">TaskRunner: 0% - idle</span><div id="trb"><i></i></div></div></div><div id="dati" class="tv" hidden><select id="sec"></select><div id="dv"></div><button id="exp">Esporta JSON</button></div><div id="sistema" class="tv" hidden>
@@ -129,15 +129,15 @@ body::after{content:"";position:fixed;inset:0;z-index:4;pointer-events:none;back
   <canvas id="wave" width="440" height="84"></canvas>
   <div class="viewctl">
    <button id="topview" title="Passa alla mappa e attiva la visione dall'alto">⬇ ALTO</button>
-   <button id="humanoid" title="Mira rivelati — mostra Mira">◉ MIRA</button>
+   <button id="humanoid" title="Iris rivelati — mostra Iris">◉ IRIS</button>
    <button id="mapview" title="Mostra la mappa 3D di JARVIS">◎ MAPPA 3D</button>
-   <button id="hudHide" title="Nascondi i pannelli per usare Mira">HUD OFF</button>
+   <button id="hudHide" title="Nascondi i pannelli per usare Iris">HUD OFF</button>
    <div class="scalebox"><label for="scale">Layout</label><input id="scale" type="range" min="60" max="140" value="100" title="Rimpicciolisci / ingrandisci i layout"></div>
   </div>
  </div>
 </div>
 <button id="hudRestore" type="button">MOSTRA HUD</button>
-<div id="humanoidWrap" hidden><div id="humanoidHead"><span>MIRA · JARVIS</span><button id="humanoidClose" aria-label="Chiudi Mira">×</button></div><iframe id="humanoidFrame" title="Mira Humanoid" src="about:blank" allow="autoplay"></iframe></div>
+<div id="humanoidWrap" hidden><div id="humanoidHead"><span>IRIS · JARVIS</span><button id="humanoidClose" aria-label="Chiudi Iris">×</button></div><iframe id="humanoidFrame" title="Iris Humanoid" src="about:blank" allow="autoplay"></iframe></div>
 <div id="pop" hidden><button id="pmn" aria-label="Riduci a icona" title="Riduci">−</button><button id="px" aria-label="Chiudi">×</button><div class="nm" id="pn"></div><div class="path" id="pp"></div><div class="st" id="ps"></div><p id="pd"></p><div id="psys"></div><h2>MECCANICA</h2><ul id="pm"></ul></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
@@ -346,7 +346,7 @@ function togglePlugin(plugin){if(!bridgeConnected||!plugin||!plugin.name)return;
 // Tab SISTEMA: instrada le azioni al runtime (ui.py _system_action).
 function sysAction(a){if(!bridgeConnected){say("system","Bridge non connesso: azione '"+a+"' non inviata.");return}post("/api/system",{action:a}).catch(e=>say("system","Azione '"+a+"' non riuscita: "+e.message))}
 document.querySelectorAll("#sistema .sysrow").forEach(r=>{const b=r.querySelector(".sysbtn");if(b)b.onclick=()=>sysAction(r.dataset.a)});
-// ── Mappa 3D principale, reveal Mira e scala layout ─────────────────────────
+// ── Mappa 3D principale, reveal Iris e scala layout ─────────────────────────
 let topView=false;
 let visualMode="map";
 function setVisualMode(mode){visualMode="map";if(mode==="map"){document.body.classList.remove("hud-hidden");revealHumanoid(false)}$("mapview").classList.add("on")}
@@ -354,7 +354,7 @@ function setTopView(on){topView=on=on===undefined?!topView:on;setVisualMode("map
 $("topview").onclick=()=>setTopView();
 const HUMANOID_URL="https://mira-humanoid.vercel.app/";
 let humanoidLoaded=false;
-function revealHumanoid(on){const wrap=$("humanoidWrap");on=on===undefined?wrap.hidden:on;wrap.hidden=!on;$("humanoid").classList.toggle("on",on);if(on&&!humanoidLoaded){$("humanoidFrame").src=HUMANOID_URL;humanoidLoaded=true}if(on)say("system","Mira rivelata — umanoide attivo.")}
+function revealHumanoid(on){const wrap=$("humanoidWrap");on=on===undefined?wrap.hidden:on;wrap.hidden=!on;$("humanoid").classList.toggle("on",on);if(on&&!humanoidLoaded){$("humanoidFrame").src=HUMANOID_URL;humanoidLoaded=true}if(on)say("system","Iris rivelata — umanoide attiva.")}
 $("humanoid").onclick=()=>revealHumanoid();
 $("mapview").onclick=()=>setVisualMode("map");
 $("humanoidClose").onclick=()=>revealHumanoid(false);
@@ -374,7 +374,7 @@ function ask(text){say("u",esc(text));const n=norm(text);amp=1;setTimeout(()=>{i
  const hit=docs.map(d=>{const y=norm(d.join(" "));return[tk.filter(w=>y.includes(w)).length,d]}).filter(a=>a[0]>0).sort((a,b)=>b[0]-a[0]).slice(0,3);
  say("j",hit.length?hit.map(([,d])=>"<small>"+esc(d[0])+"</small><br>"+esc(d[2].slice(0,320))).join("<hr>"):"Nessun dato corrispondente nel report. Prova: porta, variabile, plugin, memoria, palette.")}
 $("send").onclick=()=>{const v=$("q").value.trim();if(v){$("q").value="";ask(v)}};$("q").onkeydown=e=>{if(e.key==="Enter")$("send").onclick()};
-say("j","JARVIS online. La mappa 3D è la schermata principale. Di' «Mira rivelati» per mostrare Mira.");
+say("j","JARVIS online. La mappa 3D è la schermata principale. Di' «Iris rivelati» per mostrare Iris.");
 function setTR(p,s){$("trt").textContent=`TaskRunner: ${p}% - ${s}`;$("trb").firstChild.style.width=p+"%"}
 $("px").onclick=()=>$("pop").hidden=true;
 const tgl=()=>{const m=$("pop").classList.toggle("min");$("pmn").textContent=m?"+":"−";$("pmn").title=m?"Espandi":"Riduci"};$("pmn").onclick=tgl;$("pn").onclick=()=>{if($("pop").classList.contains("min"))tgl()};

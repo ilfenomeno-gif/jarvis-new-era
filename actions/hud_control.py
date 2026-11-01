@@ -72,7 +72,7 @@ def hud_control(parameters: dict, player=None, **_ignored) -> str:
         command("map_view")
         return outcome.done("hud_control", action=action)
 
-    # top_view / reveal (Mira) — optional on=true|false to force, omit to toggle
+    # top_view / reveal (Iris) — optional on=true|false to force, omit to toggle
     on = params.get("on")
     kwargs = {} if not isinstance(on, bool) else {"on": on}
     command(action, **kwargs)
@@ -83,8 +83,8 @@ TOOL = {
     "name": "hud_control",
     "description": (
         "Drives the original JARVIS 3D map HUD. The map is the primary visual; "
-        "Mira is hidden until the user says 'Mira rivelati' or action=reveal is "
-        "requested, and can be hidden with 'Mira nasconditi'. "
+        "Iris is hidden until the user says 'Iris rivelati' or action=reveal is "
+        "requested, and can be hidden with 'Iris nasconditi'. "
         "action=map_view returns focus to the map. "
         "action=open_system|pick with system="
         + "|".join(_SYSTEMS)
@@ -93,7 +93,7 @@ TOOL = {
         "action=say with text=… shows a message on the HUD. action=set_task with "
         "progress=0-100 and status=… updates the TaskRunner bar. action=top_view "
         "(optional on=true|false) switches to the top-down map. action=reveal "
-        "(optional on=true|false) shows Mira or returns to the map. Use the map "
+        "(optional on=true|false) shows Iris or returns to the map. Use the map "
         "actions to show the user a system or scenario."
     ),
     "risk_class": "read",
