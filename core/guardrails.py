@@ -24,6 +24,11 @@ _SECRET_PATTERNS = (
     re.compile(r"(?i)(api[_-]?key|password|passwd|secret|token|authorization)(\s*[:=]\s*)[^\s,;]+"),
     re.compile(r"\b(?:sk|ghp|xox[baprs])-?[A-Za-z0-9_-]{16,}\b"),
     re.compile(r"\b(?:\d[ -]*?){13,19}\b"),
+    # Extended set (P4): JWT, AWS access keys, Bearer tokens, GitHub fine-grained PATs.
+    re.compile(r"\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}\b"),  # JWT
+    re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"),                                       # AWS access key id
+    re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/=-]{16,}\b"),                            # Bearer token
+    re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b"),                                    # GitHub fine-grained PAT
 )
 _ALLOWED_USER_EXECUTABLES = {
     "brightnessctl", "ffmpeg", "ffprobe", "ollama", "open", "osascript",

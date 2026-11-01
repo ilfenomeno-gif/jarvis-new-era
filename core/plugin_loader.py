@@ -38,6 +38,7 @@ class PluginRecord:
     stop: Optional[Callable] = None
     extra_tool_declarations: Optional[Callable] = None
     run_extra_tool: Optional[Callable] = None
+    sandboxed: bool = False   # PLUGIN["sandboxed"]=True → run() in a subprocess
 
 
 class PluginRegistry:
@@ -138,6 +139,16 @@ class PluginRegistry:
                     parameters,
                     player=player,
                 ) or "Done."
+            if rec.sandboxed:
+                # Run in a separate process over declarative JSON IPC. The
+                # plugin module is never imported here; player/session_memory
+                # (live Qt objects) do not cross the process boundary.
+                from core.plugin_sandbox import run_sandboxed, SandboxError
+                try:
+                    return run_sandboxed(rec.file, parameters) or "Done."
+                except SandboxError as exc:
+                    self._logger(f"Plugin '{rec.name}' sandbox error: {exc}")
+                    return f"Sir, the '{rec.name}' plugin failed: {exc}"
             return _call_run(rec.run, parameters, player, session_memory) or "Done."
         except Exception as e:
             self._logger(f"Plugin '{rec.name}' crashed during run(): {e}")
@@ -279,7 +290,8 @@ def _validate(module, filename: str) -> PluginRecord:
                          ),
                          run_extra_tool=(
                              run_extra_fn if callable(run_extra_fn) else None
-                         ))
+                         ),
+                         sandboxed=bool(plugin_meta.get("sandboxed", False)))
 
 
 def discover_plugins(plugins_dir: Path, core_tool_names: set[str],
@@ -319,7 +331,7 @@ def discover_plugins(plugins_dir: Path, core_tool_names: set[str],
                 sys.modules.pop(module_name, None)
                 raise
 
-            rec = _validate(module, path.name)
+            rec = _validate(module, str(path))
 
             if rec.valid and rec.name in core_tool_names:
                 rec = PluginRecord(name=rec.name, file=path.name,
