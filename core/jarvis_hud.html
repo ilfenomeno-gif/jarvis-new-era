@@ -47,6 +47,11 @@ body::after{content:"";position:fixed;inset:0;z-index:4;pointer-events:none;back
 .panel{border-color:rgba(0,212,255,.4);box-shadow:inset 0 0 30px rgba(0,212,255,.08),0 0 18px rgba(0,212,255,.14);background:linear-gradient(180deg,rgba(0,212,255,.08),transparent 40%),var(--panel)}
 #info{display:flex;flex-direction:column;overflow:hidden}.tv{flex:1;min-height:0;overflow:auto}.tv[hidden]{display:none}
 #tabs{display:flex;gap:4px;margin-bottom:8px}#tabs button{flex:1;font-family:Orbitron,sans-serif;font-size:11px;letter-spacing:.1em}#tabs button.on{background:var(--cy);color:#00060a}
+.sysrow{display:flex;align-items:center;gap:8px;padding:7px 4px;border-bottom:1px solid var(--line);font-size:14px}
+.sysrow span{flex:1;color:var(--tx)}
+.sysrow b{color:var(--dim);font-weight:400;font-size:12px}
+.sysbtn{font:600 12px Rajdhani,sans-serif;color:var(--cy);background:rgba(0,212,255,.07);border:1px solid var(--line);padding:4px 12px;cursor:pointer}
+.sysbtn:hover{background:rgba(0,212,255,.2);outline:1px solid var(--cy)}
 #chat{display:flex;flex-direction:column;gap:6px}#chat[hidden]{display:none}#msgs{flex:1;overflow:auto;display:flex;flex-direction:column;gap:6px}
 .m{font-size:15px;line-height:1.3;padding:6px 9px;border-left:2px solid var(--cy);background:rgba(0,212,255,.06)}.m.u{border-color:var(--am);background:rgba(255,107,0,.08);align-self:flex-end}.m small{color:var(--am)}.m hr{border:0;border-top:1px solid var(--line);margin:6px 0}
 #inrow{display:flex;gap:4px}#q{flex:1;min-width:0;font:600 15px Rajdhani,sans-serif;color:var(--tx);background:rgba(0,212,255,.06);border:1px solid var(--line);padding:6px 8px}
@@ -90,7 +95,20 @@ body::after{content:"";position:fixed;inset:0;z-index:4;pointer-events:none;back
  <header class="panel"><h1>JARVIS MIO · MARK-LIV</h1><small>ilfenomeno-gif/jarvis-new-gen — mappa interattiva aggiornata dal report tecnico (conteggi statici)</small><div id="clock">--:--:--</div></header>
  <div id="left" class="panel"><div id="gauges"></div><ul id="list" aria-label="Pianeti"></ul></div>
  <div></div>
- <aside id="info" class="panel"><nav id="tabs"><button class="on" data-t="chat">CHAT</button><button data-t="dati">DATI</button></nav><div id="chat" class="tv"><div id="msgs"></div><div id="inrow"><input id="q" placeholder="Chiedi a JARVIS…" autocomplete="off"><button id="send">▶</button></div><div id="tr"><span id="trt">TaskRunner: 0% - idle</span><div id="trb"><i></i></div></div></div><div id="dati" class="tv" hidden><select id="sec"></select><div id="dv"></div><button id="exp">Esporta JSON</button></div></aside>
+ <aside id="info" class="panel"><nav id="tabs"><button class="on" data-t="chat">CHAT</button><button data-t="dati">DATI</button><button data-t="sistema">SISTEMA</button></nav><div id="chat" class="tv"><div id="msgs"></div><div id="inrow"><input id="q" placeholder="Chiedi a JARVIS…" autocomplete="off"><button id="send">▶</button></div><div id="tr"><span id="trt">TaskRunner: 0% - idle</span><div id="trb"><i></i></div></div></div><div id="dati" class="tv" hidden><select id="sec"></select><div id="dv"></div><button id="exp">Esporta JSON</button></div><div id="sistema" class="tv" hidden>
+  <h2>FINESTRA</h2>
+  <div class="sysrow" data-a="fullscreen"><span>Schermo intero</span><b>F11</b><button class="sysbtn">Attiva</button></div>
+  <div class="sysrow" data-a="desktop_shortcut"><span>Collegamento sul desktop</span><b>crea un file .url</b><button class="sysbtn">Crea</button></div>
+  <div class="sysrow" data-a="autostart"><span>Auto-start</span><b>avvio con Windows</b><button class="sysbtn">OFF</button></div>
+  <h2>CONTROLLO</h2>
+  <div class="sysrow" data-a="remote"><span>Remote control</span><b>stato dashboard remota</b><button class="sysbtn">Apri</button></div>
+  <div class="sysrow" data-a="dictation"><span>Offline dictation</span><b>dettatura nel campo chat</b><button class="sysbtn">OFF</button></div>
+  <h2>ASSISTENTE</h2>
+  <div class="sysrow" data-a="customize"><span>Customise assistant</span><b>nome, utente, voce</b><button class="sysbtn">Apri</button></div>
+  <div class="sysrow" data-a="audio"><span>Audio device</span><b>ingresso e uscita</b><button class="sysbtn">Apri</button></div>
+  <div class="sysrow" data-a="memory"><span>Memory</span><b>categorie della memoria</b><button class="sysbtn">Apri</button></div>
+  <div class="sysrow" data-a="plugins"><span>Plugins</span><b>abilita o disabilita</b><button class="sysbtn">Apri</button></div>
+ </div></aside>
  <div class="bar panel">
   <div class="btns" id="btns"></div>
   <div><div id="chips"></div><div id="log">Sistemi online. Trascina per ruotare, clicca un modulo o lancia un comando.</div></div>
@@ -272,7 +290,7 @@ function frame(now){const dt=Math.min((now-last)/1000,.05);last=now;t+=dt*K;
  placePop();wave(now/1000);R.render(sc,cam);requestAnimationFrame(frame)}
 
 const esc=x=>x.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])),norm=x=>x.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"");
-const TB=[...document.querySelectorAll("#tabs button")];TB.forEach(b=>b.onclick=()=>{TB.forEach(x=>x.classList.toggle("on",x===b));["chat","dati"].forEach(i=>$(i).hidden=i!==b.dataset.t)});
+const TB=[...document.querySelectorAll("#tabs button")];TB.forEach(b=>b.onclick=()=>{TB.forEach(x=>x.classList.toggle("on",x===b));["chat","dati","sistema"].forEach(i=>$(i).hidden=i!==b.dataset.t)});
 const secs=[{t:"PALETTE HUD",pal:1},...DATA.sections];secs.forEach((x,i)=>$("sec").add(new Option(x.t,i)));
 function dv(i){const x=secs[i];$("dv").innerHTML=x.pal?DATA.palette.map(([n,h])=>`<div class="sw"><i style="background:${h}"></i><b>${h}</b> ${esc(n)}</div>`).join(""):x.b.map(b=>b.k==="h"?`<h2>${esc(b.t)}</h2>`:b.k==="p"?`<p>${esc(b.t)}</p>`:b.k==="ul"?`<ul>${b.i.map(y=>`<li>${esc(y)}</li>`).join("")}</ul>`:`<div class="tw"><table><tr>${b.h.map(c=>`<th>${esc(c)}</th>`).join("")}</tr>${b.r.map(r=>`<tr>${r.map(c=>`<td>${esc(c)}</td>`).join("")}</tr>`).join("")}</table></div>`).join("")}
 $("sec").onchange=e=>dv(+e.target.value);dv(0);
@@ -298,6 +316,9 @@ function handleCommand(m){try{switch(m.action){
 try{const ev=new EventSource(API.events);ev.onopen=()=>{bridgeConnected=true;showBridgeState()};ev.onerror=()=>{bridgeConnected=false;showBridgeState()};ev.onmessage=e=>{try{handleEvent(JSON.parse(e.data))}catch(x){}}}catch(e){}
 // Toggle plugin dal runtime (click su un pianeta plugin nella mappa).
 function togglePlugin(plugin){if(!bridgeConnected||!plugin||!plugin.name)return;post(API.plugin,{name:plugin.name}).catch(e=>say("system","Impossibile cambiare "+plugin.name+": "+e.message))}
+// Tab SISTEMA: instrada le azioni al runtime (ui.py _system_action).
+function sysAction(a){if(!bridgeConnected){say("system","Bridge non connesso: azione '"+a+"' non inviata.");return}post("/api/system",{action:a}).catch(e=>say("system","Azione '"+a+"' non riuscita: "+e.message))}
+document.querySelectorAll("#sistema .sysrow").forEach(r=>{const b=r.querySelector(".sysbtn");if(b)b.onclick=()=>sysAction(r.dataset.a)});
 // ── Fine bridge ──────────────────────────────────────────────────────────────
 function ask(text){say("u",esc(text));const n=norm(text);amp=1;setTimeout(()=>{if(!token||true)amp=.25},1200);
  if(bridgeConnected){post(API.chat,{text}).catch(e=>say("system","Invio al runtime non riuscito: "+e.message));return}

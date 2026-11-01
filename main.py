@@ -981,6 +981,7 @@ class JarvisLive:
         self._hud = HudBridge()
         self._hud.on_message = self._on_hud_message
         self._hud.on_plugin = self._on_hud_plugin_toggle
+        self._hud.on_system = self.ui.system_action   # SISTEMA tab → UI actions
         # Let tools drive the HUD 3D map (open_system, tour, run scenario, …).
         self.ui.hud_command = self._hud.command
         set_ui_state = self.ui.set_state

@@ -41,6 +41,7 @@ class HudBridge:
         self.host, self.port, self.html_path = host, port, Path(html_path)
         self.on_message: Callable[[str], None] | None = None   # testo scritto nella chat dell'HUD
         self.on_plugin: Callable[[str], None] | None = None    # click su una molecola plugin
+        self.on_system: Callable[[str], None] | None = None    # azione dal tab SISTEMA dell'HUD
         self._clients: set[queue.Queue] = set()
         self._lock = threading.Lock()
         self._stats: dict[str, float | int | str | None] = {
@@ -139,6 +140,8 @@ class HudBridge:
                     bridge._fire(bridge.on_message, body["text"].strip()[:4000])
                 elif self.path == "/api/plugin" and isinstance(body.get("name"), str):
                     bridge._fire(bridge.on_plugin, body["name"][:200])
+                elif self.path == "/api/system" and isinstance(body.get("action"), str):
+                    bridge._fire(bridge.on_system, body["action"][:200])
                 else:
                     return self.send_error(400)
                 self.send_response(204)

@@ -3133,6 +3133,7 @@ class MainWindow(QMainWindow):
     _browser_stop_reading_sig = pyqtSignal()
     _page_reader_audio_sig = pyqtSignal(bool)
     _wake_word_setup_result_sig = pyqtSignal(bool, str)
+    _system_sig       = pyqtSignal(str)        # action from the HUD SISTEMA tab
     _dictation_result_sig = pyqtSignal(bool, str)
     _dictation_busy_sig = pyqtSignal(bool)
     _focus_mode_sig = pyqtSignal(bool)
@@ -3422,6 +3423,7 @@ class MainWindow(QMainWindow):
         self._wake_word_setup_result_sig.connect(self._on_wake_word_setup_result)
         self._dictation_result_sig.connect(self._on_dictation_result)
         self._dictation_busy_sig.connect(self._set_dictation_busy)
+        self._system_sig.connect(self._system_action)
         self._page_read_pending = False
         self._page_reader = PageSpeechWorker(
             on_error=self._log_sig.emit,
@@ -5233,16 +5235,49 @@ class MainWindow(QMainWindow):
         else:
             accepted = callback(enabled) is not False
         if not accepted:
-            self._dictation_btn.blockSignals(True)
-            self._dictation_btn.setChecked(not enabled)
-            self._dictation_btn.blockSignals(False)
+            btn = getattr(self, "_dictation_btn", None)
+            if btn is not None:
+                btn.blockSignals(True)
+                btn.setChecked(not enabled)
+                btn.blockSignals(False)
             return
-        self._dictation_btn.setText(
-            "■  STOP DICTATION" if enabled else "🎙  OFFLINE DICTATION"
-        )
+        btn = getattr(self, "_dictation_btn", None)
+        if btn is not None:
+            btn.setText(
+                "■  STOP DICTATION" if enabled else "🎙  OFFLINE DICTATION"
+            )
 
     def _set_dictation_busy(self, busy: bool) -> None:
-        self._dictation_btn.setEnabled(not busy)
+        btn = getattr(self, "_dictation_btn", None)
+        if btn is not None:
+            btn.setEnabled(not busy)
+
+    def _system_action(self, action: str) -> None:
+        """Dispatch an action from the HUD SISTEMA tab (runs on the Qt thread)."""
+        dispatch = {
+            "fullscreen": "_toggle_fullscreen",
+            "desktop_shortcut": "_create_desktop_shortcut",
+            "autostart": "_toggle_autostart",
+            "remote": "_open_remote",
+            "dictation": "_toggle_dictation",
+            "customize": "_open_customize",
+            "audio": "_open_audio_devices",
+            "memory": "_open_memory_panel",
+            "plugins": "_open_plugin_manager",
+        }
+        key = str(action).strip().lower()
+        method = dispatch.get(key)
+        fn = getattr(self, method, None) if method else None
+        if callable(fn):
+            try:
+                if key == "dictation":
+                    fn(True)
+                else:
+                    fn()
+            except Exception as exc:
+                self._log_sig.emit(f"ERR: system action '{action}' failed: {exc}")
+        else:
+            self._log_sig.emit(f"ERR: unknown system action '{action}'")
 
     def _on_dictation_result(self, success: bool, value: str) -> None:
         self._set_dictation_busy(False)
@@ -6160,6 +6195,10 @@ class JarvisUI:
 
     def restore_layout(self) -> None:
         self._win._restore_layout_sig.emit()
+
+    def system_action(self, action: str) -> None:
+        """Thread-safe: run a SISTEMA-tab action on the Qt thread."""
+        self._win._system_sig.emit(str(action))
 
     def viewer3d_show(self, visible: bool) -> None:
         self._win._viewer_show_sig.emit(bool(visible))
