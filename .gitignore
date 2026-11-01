@@ -23,6 +23,7 @@ memory/*.json
 !/memory/learned_patterns.json
 *.log
 /cache/3d/
+/n8n-data/
 
 # ── Editor / OS ──────────────────────────────────────────────────────────
 .vscode/

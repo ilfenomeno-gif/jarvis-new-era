@@ -95,6 +95,24 @@ def test_https_only(cfg, monkeypatch):
     assert "https://" in line
 
 
+def test_http_allowed_on_loopback(cfg, monkeypatch):
+    # self-hosted n8n on 127.0.0.1 may use plain http (loopback only)
+    _write(cfg, base_url="http://127.0.0.1:5678")
+    rt = _FakeRuntime("tok")
+    monkeypatch.setattr(bridge, "get_runtime", lambda: rt)
+    client = _mock_response(monkeypatch, status=200, text="ok")
+    line = bridge.call_workflow("task")
+    assert line.startswith("status=done")
+    assert client.last["url"].startswith("http://127.0.0.1:5678/")
+
+
+def test_http_localhost_allowed(cfg, monkeypatch):
+    _write(cfg, base_url="http://localhost:5678")
+    monkeypatch.setattr(bridge, "get_runtime", lambda: _FakeRuntime("tok"))
+    _mock_response(monkeypatch, status=200, text="ok")
+    assert bridge.call_workflow("task").startswith("status=done")
+
+
 def test_missing_secret_fails(cfg, monkeypatch):
     _write(cfg)
     monkeypatch.setattr(bridge, "get_runtime", lambda: _FakeRuntime(None))

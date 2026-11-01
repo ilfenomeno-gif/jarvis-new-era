@@ -71,11 +71,30 @@ def _endpoint(cfg: dict) -> str:
     path = str(cfg.get("webhook_path") or "").strip()
     if not base or not path:
         raise N8nBridgeError("config needs base_url and webhook_path")
-    if not base.startswith("https://"):
-        raise N8nBridgeError("base_url must be https:// (no plaintext webhook)")
+    if not _base_url_allowed(base):
+        raise N8nBridgeError(
+            "base_url must be https:// (http is allowed only on loopback: "
+            "127.0.0.1 / localhost, for a self-hosted n8n)")
     if not path.startswith("/"):
         path = "/" + path
     return base + path
+
+
+def _base_url_allowed(base: str) -> bool:
+    """https always; http only when the host is loopback (self-hosted n8n)."""
+    if base.startswith("https://"):
+        return True
+    if not base.startswith("http://"):
+        return False
+    from urllib.parse import urlparse
+    import ipaddress
+    host = urlparse(base).hostname or ""
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
 
 
 def _auth(cfg: dict) -> dict[str, str]:
