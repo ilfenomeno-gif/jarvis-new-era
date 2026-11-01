@@ -1313,9 +1313,9 @@ class JarvisLive:
     def _hud_visibility_request(text: str) -> bool | None:
         normalized = re.sub(r"[^\w\s]", "", text.casefold())
         normalized = " ".join(normalized.split())
-        if normalized == "jarvis rivelati":
+        if normalized == "mira rivelati":
             return True
-        if normalized == "jarvis nasconditi":
+        if normalized == "mira nasconditi":
             return False
         return None
 
@@ -1327,10 +1327,10 @@ class JarvisLive:
             self.ui.write_log(f"ERR: Impossibile aggiornare l'umanoide HUD: {exc}")
             return
 
-        message = "Mira è la visuale principale." if visible else "Mira nascosta; mappa 3D attiva."
+        message = "Mira è attiva nella HUD." if visible else "Mira nascosta; mappa 3D attiva."
         self.ui.write_log(f"SYS: {message}")
         if visible and self.session:
-            self.speak("Mi rivelo.")
+            self.speak("Mira, eccomi.")
 
     def _on_text_command(self, text: str, *, from_hud: bool = False):
         if not from_hud:

@@ -82,8 +82,11 @@ def hud_control(parameters: dict, player=None, **_ignored) -> str:
 TOOL = {
     "name": "hud_control",
     "description": (
-        "Drives the JARVIS HUD. Mira is the primary visual; the 3D map remains "
-        "available with action=map_view. action=open_system|pick with system="
+        "Drives the original JARVIS 3D map HUD. The map is the primary visual; "
+        "Mira is hidden until the user says 'Mira rivelati' or action=reveal is "
+        "requested, and can be hidden with 'Mira nasconditi'. "
+        "action=map_view returns focus to the map. "
+        "action=open_system|pick with system="
         + "|".join(_SYSTEMS)
         + " opens/highlights that module. action=tour starts the guided tour. "
         "action=run with scenario=" + "|".join(_SCENARIOS) + " plays a demo scenario. "

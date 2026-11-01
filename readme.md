@@ -23,14 +23,14 @@ Assistente desktop AI personale (Windows-first), fusione di:
 | UI Mira + HUD | Mira Humanoid è la visuale iniziale; chat, metriche, tab SISTEMA, tour e comandi restano nell'overlay; `MAPPA 3D` riapre la scena Three.js | `core/jarvis_hud.html`, `actions/hud_control.py` |
 | Avatar desktop nativo | opt-in via `hud_style="face"` (default `core` invariato), indipendente dall'iframe Mira | `ui.py`, `core/avatar.py` |
 
-Mira è incorporata dal sito esterno `https://mira-humanoid.vercel.app/`; all'avvio resta
-visibile solo la chat Jarvis, mentre F2 alterna la HUD completa. L'iframe è cross-origin:
-la HUD non può premere automaticamente il pulsante ENTER né sincronizzare gli stati
-interni di Mira senza un'API supportata dal sito. ENTER richiede un gesto utente per
-avviare l'audio; i controlli Mira restano utilizzabili direttamente nell'iframe. Camera
-e microfono dipendono dai permessi del browser e del sistema operativo. L'host Qt
-consente la navigazione principale solo sul bridge locale e il frame HTTPS solo per
-l'origine Mira; nasconde inoltre il vecchio chrome Qt quando la HUD web è attiva.
+La HUD originale con mappa 3D è la schermata iniziale. Mira è incorporata dal sito
+esterno `https://mira-humanoid.vercel.app/` e viene caricata solo quando si pronuncia
+o si invia il comando esatto **“Mira rivelati”**; **“Mira nasconditi”** la richiude.
+L'iframe è cross-origin: la HUD non può premere automaticamente il pulsante ENTER né
+sincronizzare gli stati interni di Mira senza un'API supportata dal sito. ENTER richiede
+un gesto utente per avviare l'audio. L'host Qt consente la pagina principale solo sul
+bridge locale e il frame HTTPS solo per l'origine Mira; nasconde il chrome Qt duplicato
+quando la HUD web è attiva.
 
 ## Stato dei test
 

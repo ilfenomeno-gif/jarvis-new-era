@@ -1,4 +1,4 @@
-"""Tests for HUD top view, humanoid reveal ("Jarvis rivelati"), and layout scale."""
+"""Tests for the original map HUD, Mira reveal phrase, top view, and layout scale."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -16,12 +16,16 @@ class _Player:
 
 def test_hud_html_has_top_view_humanoid_scale():
     html = (Path("core") / "jarvis_hud.html").read_text(encoding="utf-8")
-    assert '<body class="mira-mode chat-only">' in html
-    assert 'body.chat-only .hud>*:not(#info){display:none!important}' in html
-    assert 'body.chat-only #tabs,body.chat-only #dati,body.chat-only #sistema,body.chat-only #tr{display:none!important}' in html
-    assert 'e.key==="F2"&&visualMode==="mira"' in html
+    assert "<title>JARVIS Mark-LIV · Mappa 3D</title>" in html
+    assert "<body>" in html
+    assert "chat-only" not in html
+    assert 'id="humanoidWrap" hidden' in html
+    assert 'src="about:blank"' in html
+    assert 'let visualMode="map"' in html
+    assert 'setVisualMode("mira")' not in html
     assert 'id="humanoidFrame"' in html
-    assert 'src="https://mira-humanoid.vercel.app/"' in html
+    assert 'const HUMANOID_URL="https://mira-humanoid.vercel.app/"' in html
+    assert 'if(on&&!humanoidLoaded){$("humanoidFrame").src=HUMANOID_URL' in html
     assert 'id="mapview"' in html
     assert 'id="hudHide"' in html
     assert 'id="hudRestore"' in html
@@ -33,7 +37,7 @@ def test_hud_html_has_top_view_humanoid_scale():
     assert 'function pick(id,open=true){if(open)setVisualMode("map")' in html
     assert 'function openSystem(id,tr){if(!tr&&touring)' in html and \
            'setVisualMode("map");if((id||"main")===view)' in html
-    assert 'Mira come visuale principale' in html
+    assert 'Mira rivelata — umanoide attivo.' in html
     # top view
     assert 'id="topview"' in html
     assert "setTopView" in html
@@ -41,7 +45,7 @@ def test_hud_html_has_top_view_humanoid_scale():
     # humanoid
     assert 'id="humanoidWrap"' in html
     assert "revealHumanoid" in html
-    assert 'allow="camera; microphone; autoplay"' in html
+    assert 'allow="autoplay"' in html
     # layout scale
     assert 'id="scale"' in html
     assert 'type="range"' in html
@@ -73,7 +77,7 @@ def test_hud_control_new_actions_in_contract():
 
 
 def test_rivelati_phrase_routes_to_reveal():
-    """'Jarvis rivelati' triggers the reveal command on the HUD."""
+    """The spoken phrase "Mira rivelati" triggers the reveal command."""
     import main as main_module
     import inspect
     text_src = inspect.getsource(main_module.JarvisLive._on_text_command)
@@ -84,11 +88,12 @@ def test_rivelati_phrase_routes_to_reveal():
     assert "_set_hud_humanoid_visible" in voice_src
 
 
-def test_hud_visibility_phrase_requires_exact_jarvis_command():
+def test_hud_visibility_phrase_requires_exact_mira_command():
     from main import JarvisLive
 
-    assert JarvisLive._hud_visibility_request("Jarvis rivelati!") is True
-    assert JarvisLive._hud_visibility_request("  JARVIS   RIVELATI  ") is True
-    assert JarvisLive._hud_visibility_request("Jarvis nasconditi.") is False
+    assert JarvisLive._hud_visibility_request("Mira rivelati!") is True
+    assert JarvisLive._hud_visibility_request("  MIRA   RIVELATI  ") is True
+    assert JarvisLive._hud_visibility_request("Mira nasconditi.") is False
+    assert JarvisLive._hud_visibility_request("Jarvis rivelati") is None
     assert JarvisLive._hud_visibility_request("rivelati nella scena") is None
     assert JarvisLive._hud_visibility_request("Puoi rivelarti?") is None
