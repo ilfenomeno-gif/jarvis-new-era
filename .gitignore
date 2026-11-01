@@ -1,6 +1,7 @@
 # ── Secrets — never commit ───────────────────────────────────────────────
 config/api_keys.json
 config/voice_settings.json
+config/n8n.json
 config/certs/
 *.pem
 *.key
