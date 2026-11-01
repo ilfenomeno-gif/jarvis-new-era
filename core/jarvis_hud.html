@@ -285,7 +285,16 @@ const API={chat:"/api/chat",plugin:"/api/plugin",events:"/events"};
 let bridgeConnected=false,assistantState="starting";
 async function post(path,payload){const r=await fetch(path,{method:"POST",headers:{"Content-Type":"application/json","X-HUD":"1"},body:JSON.stringify(payload)});if(!r.ok)throw new Error("Bridge HTTP "+r.status)}
 function showBridgeState(){const c=assistantState.toUpperCase().replaceAll("_"," ");$("log").innerHTML=bridgeConnected?`Bridge collegato · <b>${c}</b>`:"Bridge Jarvis: disconnesso — chat in modalità demo locale."}
-function handleEvent(m){switch(m.type){case"hello":bridgeConnected=true;assistantState=m.state||"starting";showBridgeState();renderStats(m.stats);renderPlugins(m.plugins);if(m.runtime){const t=m.runtime.task||{};setTR(t.progress,t.status)}if(m.speaking)amp=.8;break;case"stats":renderStats(m.stats);break;case"plugins":renderPlugins(m.items);break;case"state":assistantState=m.state||"unknown";showBridgeState();break;case"speak":amp=m.on?(Number.isFinite(m.level)?Math.max(0,Math.min(1,m.level)):.8):0;break;case"chat":say(m.role==="user"?"u":(m.role==="system"?"system":"j"),esc(String(m.text)));break;case"runtime":const t=m.runtime&&m.runtime.task||{};setTR(t.progress,t.status);break;case"shutdown":bridgeConnected=false;showBridgeState();break}}
+function handleEvent(m){switch(m.type){case"hello":bridgeConnected=true;assistantState=m.state||"starting";showBridgeState();renderStats(m.stats);renderPlugins(m.plugins);if(m.runtime){const t=m.runtime.task||{};setTR(t.progress,t.status)}if(m.speaking)amp=.8;break;case"stats":renderStats(m.stats);break;case"plugins":renderPlugins(m.items);break;case"state":assistantState=m.state||"unknown";showBridgeState();break;case"speak":amp=m.on?(Number.isFinite(m.level)?Math.max(0,Math.min(1,m.level)):.8):0;break;case"chat":say(m.role==="user"?"u":(m.role==="system"?"system":"j"),esc(String(m.text)));break;case"runtime":const t=m.runtime&&m.runtime.task||{};setTR(t.progress,t.status);break;case"command":handleCommand(m);break;case"shutdown":bridgeConnected=false;showBridgeState();break}}
+// Jarvis guida la mappa 3D: comandi dal runtime.
+function handleCommand(m){try{switch(m.action){
+ case"open_system":if(m.id)openSystem(m.id);break;
+ case"pick":if(m.id)pick(m.id);break;
+ case"tour":tour();break;
+ case"run":if(m.scenario&&S[m.scenario])run(m.scenario);break;
+ case"say":if(m.text)say("j",esc(String(m.text)));break;
+ case"set_task":setTR(m.progress,m.status);break;
+ default:break}}catch(e){}}
 try{const ev=new EventSource(API.events);ev.onopen=()=>{bridgeConnected=true;showBridgeState()};ev.onerror=()=>{bridgeConnected=false;showBridgeState()};ev.onmessage=e=>{try{handleEvent(JSON.parse(e.data))}catch(x){}}}catch(e){}
 // Toggle plugin dal runtime (click su un pianeta plugin nella mappa).
 function togglePlugin(plugin){if(!bridgeConnected||!plugin||!plugin.name)return;post(API.plugin,{name:plugin.name}).catch(e=>say("system","Impossibile cambiare "+plugin.name+": "+e.message))}

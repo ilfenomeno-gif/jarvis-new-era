@@ -189,6 +189,16 @@ class HudBridge:
     def push_chat(self, role: str, text: str) -> None:
         self._broadcast({"type": "chat", "role": role, "text": text})
 
+    def command(self, action: str, **kwargs) -> None:
+        """Send a command to the HUD so Jarvis can drive the 3D map UI.
+
+        The HUD (jarvis_hud.html) handles these in its `handleEvent` "command"
+        case. Actions: open_system(id), pick(id), tour(), run(scenario),
+        say(text), set_task(progress, status). Unknown actions are ignored by
+        the HUD (fail-safe).
+        """
+        self._broadcast({"type": "command", "action": str(action), **kwargs})
+
     def say(self, text: str, speak: bool = True, role: str = "assistant") -> None:
         """Mostra il messaggio in chat; se speak=True le molecole si separano per una durata stimata.
         Se hai il vero inizio/fine dell'audio usa set_speaking() e passa speak=False."""

@@ -87,6 +87,8 @@ GROUPS: tuple[Group, ...] = (
     _group("games", r"gioc|\bgame|steam|\bepic\b", {"game_updater"}),
     _group("ui", r"pannell|panel|layout|focus|\bdock|workspace|nascondi|\bhide|mostra|\bshow|\blog\b|interfaccia|chiudi il|apri il",
            {"ui_layout"}),
+    _group("hud_map", r"\bhud\b|mappa 3d|\bmappa\b|pianet|sistema solare|\btour\b|scenario|apri (?:il )?sistema|mostra (?:il )?(?:sistema|modulo|pianeta)",
+           {"hud_control"}),
 )
 
 
