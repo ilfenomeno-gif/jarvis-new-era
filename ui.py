@@ -147,8 +147,21 @@ class _SafeBrowserPage(QWebEnginePage):
 
 
 class _HudBrowserPage(QWebEnginePage):
+    @staticmethod
+    def navigation_allowed(url, is_main_frame: bool) -> bool:
+        if is_main_frame:
+            return (
+                url.scheme() == "http"
+                and url.host() in ("127.0.0.1", "localhost")
+            )
+        return (
+            url.scheme() == "https"
+            and url.host() == "mira-humanoid.vercel.app"
+            and url.port(-1) in (-1, 443)
+        )
+
     def acceptNavigationRequest(self, url, navigation_type, is_main_frame):
-        if url.scheme() != "http" or url.host() not in ("127.0.0.1", "localhost"):
+        if not self.navigation_allowed(url, is_main_frame):
             return False
         return super().acceptNavigationRequest(url, navigation_type, is_main_frame)
 
@@ -3736,6 +3749,11 @@ class MainWindow(QMainWindow):
         if succeeded:
             self._hud_cam_stack.setCurrentWidget(self._hud_browser_view)
             self._main_content_stack.setCurrentWidget(self._hud_cam_stack)
+            self._header_panel.hide()
+            self._content_panel.hide()
+            self._footer_panel.hide()
+            self.setWindowTitle("JARVIS VII · MIRA")
+            self._center_split.setSizes([self._center_split.height(), 0])
         else:
             self._hud_cam_stack.setCurrentWidget(self.hud)
             self._log_sig.emit(
@@ -3790,6 +3808,15 @@ class MainWindow(QMainWindow):
             self._viewer3d_pending.append(script)
 
     def _render_panels(self) -> None:
+        if self._hud_browser_loaded:
+            for widget in (
+                self._header_panel,
+                self._content_panel,
+                self._footer_panel,
+                *self._docks.values(),
+            ):
+                widget.hide()
+            return
         widgets = {
             "header": self._header_panel,
             "content": self._content_panel,
@@ -5409,6 +5436,16 @@ class MainWindow(QMainWindow):
 
     def _show_content(self, title: str, text: str):
         """Slot — runs on Qt main thread. Updates and shows the content panel."""
+        if self._hud_browser_loaded:
+            payload_title = json.dumps(title[:48], ensure_ascii=False)
+            payload_text = json.dumps(text[:4000], ensure_ascii=False)
+            script = (
+                "if (typeof window.jarvisHudMessage === 'function') "
+                f"window.jarvisHudMessage({payload_title}, {payload_text});"
+            )
+            self._hud_browser_view.page().runJavaScript(script)
+            self._content_panel.hide()
+            return
         import time as _time
         self._content_title_lbl.setText(title.upper()[:48])
         self._content_ts_lbl.setText(_time.strftime("%H:%M:%S"))

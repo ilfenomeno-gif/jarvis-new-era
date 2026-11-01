@@ -153,6 +153,37 @@ def test_real_window_renders_each_workspace(real_ui):
     assert jarvis.panel_status()["workspace"] == "custom"
 
 
+def test_embedded_hud_hides_legacy_chrome_and_briefing(real_ui):
+    jarvis = real_ui()
+    win = jarvis._win
+    win._panel_state.restore(
+        {"header": True, "content": True, "footer": True},
+        "custom",
+    )
+    win._render_panels()
+    real_ui.app.processEvents()
+    assert _visible(win)["content"]
+
+    win._on_hud_browser_load_finished(True)
+    real_ui.app.processEvents()
+
+    assert not _visible(win)["header"]
+    assert not _visible(win)["content"]
+    assert not _visible(win)["footer"]
+    assert win.windowTitle() == "JARVIS VII · MIRA"
+    assert win._main_content_stack.currentWidget() is win._hud_cam_stack
+
+    win._render_panels()
+    real_ui.app.processEvents()
+    assert not _visible(win)["header"]
+    assert not _visible(win)["content"]
+    assert not _visible(win)["footer"]
+
+    win._show_content("Briefing", "legacy result")
+    real_ui.app.processEvents()
+    assert not _visible(win)["content"]
+
+
 def test_quantum_hud_draws_blueprint_and_uses_runtime_telemetry():
     from PyQt6.QtWidgets import QApplication
     from PyQt6.QtGui import QPixmap

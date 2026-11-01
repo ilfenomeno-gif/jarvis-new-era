@@ -25,6 +25,7 @@ def test_hud_html_has_top_view_humanoid_scale():
     assert 'id="mapview"' in html
     assert 'id="hudHide"' in html
     assert 'id="hudRestore"' in html
+    assert 'window.jarvisHudMessage=' in html
     assert 'body.hud-hidden .hud{display:none}' in html
     assert 'body.hud-hidden #hudRestore{display:block}' in html
     assert 'function setVisualMode(mode)' in html

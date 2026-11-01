@@ -28,7 +28,9 @@ visibile solo la chat Jarvis, mentre F2 alterna la HUD completa. L'iframe è cro
 la HUD non può premere automaticamente il pulsante ENTER né sincronizzare gli stati
 interni di Mira senza un'API supportata dal sito. ENTER richiede un gesto utente per
 avviare l'audio; i controlli Mira restano utilizzabili direttamente nell'iframe. Camera
-e microfono dipendono dai permessi del browser e del sistema operativo.
+e microfono dipendono dai permessi del browser e del sistema operativo. L'host Qt
+consente la navigazione principale solo sul bridge locale e il frame HTTPS solo per
+l'origine Mira; nasconde inoltre il vecchio chrome Qt quando la HUD web è attiva.
 
 ## Stato dei test
 

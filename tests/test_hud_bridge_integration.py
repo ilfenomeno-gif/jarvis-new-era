@@ -8,8 +8,9 @@ from types import SimpleNamespace
 from urllib.request import Request, urlopen
 
 import main
+from PyQt6.QtCore import QUrl
 from core.hud_bridge import HudBridge
-from ui import MainWindow
+from ui import MainWindow, _HudBrowserPage
 
 
 class _Hud:
@@ -168,8 +169,16 @@ def test_bridge_serves_hud_forwards_chat_and_releases_port():
     finally:
         bridge.stop()
 
-    with socket.socket() as probe:
-        probe.bind(("127.0.0.1", port))
+
+def test_hud_browser_allows_only_local_main_page_and_mira_https_iframe():
+    allow = _HudBrowserPage.navigation_allowed
+    assert allow(QUrl("http://127.0.0.1:8765/"), True)
+    assert allow(QUrl("http://localhost:8765/"), True)
+    assert not allow(QUrl("https://mira-humanoid.vercel.app/"), True)
+    assert allow(QUrl("https://mira-humanoid.vercel.app/"), False)
+    assert not allow(QUrl("https://example.com/"), False)
+    assert not allow(QUrl("http://mira-humanoid.vercel.app/"), False)
+    assert not allow(QUrl("https://mira-humanoid.vercel.app:444/"), False)
 
 
 def test_bridge_hud_receives_runtime_and_assistant_state():
@@ -260,18 +269,31 @@ def test_embedded_hud_loads_only_from_local_bridge():
 
 
 def test_embedded_hud_becomes_active_and_falls_back_on_load_error():
+    class _Panel:
+        def __init__(self):
+            self.hidden = False
+
+        def hide(self):
+            self.hidden = True
+
     browser, native, main_stack, center_stack = (
         object(),
         object(),
         _Stack(),
         _Stack(),
     )
+    header, content, footer = _Panel(), _Panel(), _Panel()
     window = SimpleNamespace(
         _hud_browser_view=browser,
         _hud_browser_loaded=False,
         hud=native,
         _hud_cam_stack=center_stack,
         _main_content_stack=main_stack,
+        _header_panel=header,
+        _content_panel=content,
+        _footer_panel=footer,
+        _center_split=SimpleNamespace(setSizes=lambda _sizes: None, height=lambda: 600),
+        setWindowTitle=lambda _title: None,
         _log_sig=_Signal(),
     )
 
@@ -279,6 +301,7 @@ def test_embedded_hud_becomes_active_and_falls_back_on_load_error():
     assert window._hud_browser_loaded
     assert center_stack.current is browser
     assert main_stack.current is center_stack
+    assert header.hidden and content.hidden and footer.hidden
 
     MainWindow._on_hud_browser_load_finished(window, False)
     assert not window._hud_browser_loaded

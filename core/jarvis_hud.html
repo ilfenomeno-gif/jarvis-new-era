@@ -326,6 +326,7 @@ $("exp").onclick=()=>{try{const a=document.createElement("a");a.href=URL.createO
 const docs=[];DATA.sections.forEach(x=>{let h="";x.b.forEach(b=>{if(b.k==="h")h=b.t;else if(b.k==="p")docs.push([x.t,h,b.t]);else if(b.k==="ul")b.i.forEach(y=>docs.push([x.t,h,y]));else b.r.forEach(r=>docs.push([x.t,h,b.h.map((c,k)=>c+": "+r[k]).join(" · ")]))})});
 const SW=/^(che|come|per|con|del|dei|della|delle|qual|quale|quali|sono|nel|nei|una|uno|gli|dove|cosa|fra|tra|mi|dai)$/;
 function say(w,h){const d=document.createElement("div");d.className="m "+w;d.innerHTML=h;$("msgs").appendChild(d);$("msgs").scrollTop=1e9}
+window.jarvisHudMessage=(title,text)=>say("j","<small>"+esc(String(title))+"</small><br>"+esc(String(text)));
 // ── Bridge al runtime Jarvis (SSE + POST), iniettato da JARVIS VII ──────────
 const API={chat:"/api/chat",plugin:"/api/plugin",events:"/events"};
 let bridgeConnected=false,assistantState="starting";
