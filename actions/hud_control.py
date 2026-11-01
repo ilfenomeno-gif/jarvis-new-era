@@ -18,7 +18,7 @@ _SCENARIOS = (
     "Apri Netflix", "Spegni il PC", "Task multi-fase", "Genera modello 3D",
     "Interroga GEV", "Usa una skill",
 )
-_ACTIONS = ("open_system", "pick", "tour", "run", "say", "set_task")
+_ACTIONS = ("open_system", "pick", "tour", "run", "say", "set_task", "top_view", "reveal")
 
 
 def hud_control(parameters: dict, player=None, **_ignored) -> str:
@@ -59,10 +59,17 @@ def hud_control(parameters: dict, player=None, **_ignored) -> str:
         return outcome.done("hud_control", action="say")
 
     # set_task
-    progress = params.get("progress", 0)
-    status = str(params.get("status", "idle"))
-    command("set_task", progress=progress, status=status)
-    return outcome.done("hud_control", action="set_task", status=status)
+    if action == "set_task":
+        progress = params.get("progress", 0)
+        status = str(params.get("status", "idle"))
+        command("set_task", progress=progress, status=status)
+        return outcome.done("hud_control", action="set_task", status=status)
+
+    # top_view / reveal (umanoid) — optional on=true|false to force, omit to toggle
+    on = params.get("on")
+    kwargs = {} if not isinstance(on, bool) else {"on": on}
+    command(action, **kwargs)
+    return outcome.done("hud_control", action=action)
 
 
 TOOL = {
@@ -73,8 +80,10 @@ TOOL = {
         + " opens/highlights that module. action=tour starts the guided tour. "
         "action=run with scenario=" + "|".join(_SCENARIOS) + " plays a demo scenario. "
         "action=say with text=… shows a message on the HUD. action=set_task with "
-        "progress=0-100 and status=… updates the TaskRunner bar. Use this to show the "
-        "user a system or scenario on the 3D map."
+        "progress=0-100 and status=… updates the TaskRunner bar. action=top_view "
+        "(optional on=true|false) toggles the top-down view. action=reveal "
+        "(optional on=true|false) shows/hides the humanoid (Mira). Use this to show "
+        "the user a system or scenario on the 3D map."
     ),
     "risk_class": "read",
     "parameters": {
@@ -86,6 +95,7 @@ TOOL = {
             "text": {"type": "STRING", "description": "Text for action=say."},
             "progress": {"type": "NUMBER", "description": "0-100 for action=set_task."},
             "status": {"type": "STRING", "description": "Status for action=set_task."},
+            "on": {"type": "BOOLEAN", "description": "Optional on/off for top_view and reveal."},
         },
         "required": ["action"],
     },

@@ -1309,6 +1309,29 @@ class JarvisLive:
     def _on_hud_message(self, text: str) -> None:
         self._on_text_command(text, from_hud=True)
 
+    @staticmethod
+    def _hud_visibility_request(text: str) -> bool | None:
+        normalized = re.sub(r"[^\w\s]", "", text.casefold())
+        normalized = " ".join(normalized.split())
+        if normalized == "jarvis rivelati":
+            return True
+        if normalized == "jarvis nasconditi":
+            return False
+        return None
+
+    def _set_hud_humanoid_visible(self, visible: bool) -> None:
+        try:
+            self._hud.command("reveal", on=visible)
+        except Exception as exc:
+            logging.getLogger(__name__).exception("HUD humanoid visibility command failed")
+            self.ui.write_log(f"ERR: Impossibile aggiornare l'umanoide HUD: {exc}")
+            return
+
+        message = "Jarvis rivelati — umanoide attivo." if visible else "Umanoide nascosto."
+        self.ui.write_log(f"SYS: {message}")
+        if visible and self.session:
+            self.speak("Mi rivelo.")
+
     def _on_text_command(self, text: str, *, from_hud: bool = False):
         if not from_hud:
             self._hud.push_chat("user", text)
@@ -1318,6 +1341,10 @@ class JarvisLive:
             return
 
         lowered = text.strip().lower()
+        visibility_request = self._hud_visibility_request(text)
+        if visibility_request is not None:
+            self._set_hud_humanoid_visible(visibility_request)
+            return
         if "passa al cervello locale" in lowered or "usa ollama" in lowered:
             self._brain_router.switch("local")
             model = self._brain_router.model_name()
@@ -1372,6 +1399,10 @@ class JarvisLive:
 
     def _route_voice_transcript(self, text: str) -> bool:
         lowered = text.strip().lower()
+        visibility_request = self._hud_visibility_request(text)
+        if visibility_request is not None:
+            self._set_hud_humanoid_visible(visibility_request)
+            return True
         if "passa al cervello locale" in lowered or "usa ollama" in lowered:
             self._brain_router.switch("local")
             self.ui.write_log(

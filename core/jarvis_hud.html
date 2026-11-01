@@ -52,6 +52,17 @@ body::after{content:"";position:fixed;inset:0;z-index:4;pointer-events:none;back
 .sysrow b{color:var(--dim);font-weight:400;font-size:12px}
 .sysbtn{font:600 12px Rajdhani,sans-serif;color:var(--cy);background:rgba(0,212,255,.07);border:1px solid var(--line);padding:4px 12px;cursor:pointer}
 .sysbtn:hover{background:rgba(0,212,255,.2);outline:1px solid var(--cy)}
+.viewctl{display:flex;flex-direction:column;gap:6px;align-items:stretch}
+.viewctl button{font:600 12px Rajdhani,sans-serif;color:var(--cy);background:rgba(0,212,255,.07);border:1px solid var(--line);padding:5px 10px;cursor:pointer;white-space:nowrap}
+.viewctl button:hover{background:rgba(0,212,255,.2);outline:1px solid var(--cy)}
+.viewctl button.on{background:var(--am);color:#021018;border-color:var(--am)}
+.scalebox{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--dim)}
+.scalebox input{flex:1;accent-color:var(--cy)}
+#humanoidWrap{position:fixed;right:18px;bottom:18px;width:min(420px,44vw);height:min(560px,72vh);z-index:30;background:var(--panel);border:1px solid var(--line);box-shadow:0 0 30px rgba(0,212,255,.25);display:flex;flex-direction:column;clip-path:polygon(0 0,calc(100% - 14px) 0,100% 14px,100% 100%,14px 100%,0 calc(100% - 14px))}
+#humanoidWrap[hidden]{display:none}
+#humanoidHead{display:flex;justify-content:space-between;align-items:center;padding:6px 10px;font:800 11px Orbitron,sans-serif;letter-spacing:.12em;color:var(--cy);border-bottom:1px solid var(--line)}
+#humanoidHead button{background:transparent;border:none;color:var(--am);font-size:18px;cursor:pointer}
+#humanoidFrame{flex:1;border:none;background:#000}
 #chat{display:flex;flex-direction:column;gap:6px}#chat[hidden]{display:none}#msgs{flex:1;overflow:auto;display:flex;flex-direction:column;gap:6px}
 .m{font-size:15px;line-height:1.3;padding:6px 9px;border-left:2px solid var(--cy);background:rgba(0,212,255,.06)}.m.u{border-color:var(--am);background:rgba(255,107,0,.08);align-self:flex-end}.m small{color:var(--am)}.m hr{border:0;border-top:1px solid var(--line);margin:6px 0}
 #inrow{display:flex;gap:4px}#q{flex:1;min-width:0;font:600 15px Rajdhani,sans-serif;color:var(--tx);background:rgba(0,212,255,.06);border:1px solid var(--line);padding:6px 8px}
@@ -113,8 +124,14 @@ body::after{content:"";position:fixed;inset:0;z-index:4;pointer-events:none;back
   <div class="btns" id="btns"></div>
   <div><div id="chips"></div><div id="log">Sistemi online. Trascina per ruotare, clicca un modulo o lancia un comando.</div></div>
   <canvas id="wave" width="440" height="84"></canvas>
+  <div class="viewctl">
+   <button id="topview" title="Visione dall'alto">⬇ ALTO</button>
+   <button id="humanoid" title="Jarvis rivelati — mostra l'umanoide">◉ UMANOIDE</button>
+   <div class="scalebox"><label for="scale">Layout</label><input id="scale" type="range" min="60" max="140" value="100" title="Rimpicciolisci / ingrandisci i layout"></div>
+  </div>
  </div>
 </div>
+<div id="humanoidWrap" hidden><div id="humanoidHead"><span>JARVIS · UMANOIDE</span><button id="humanoidClose" aria-label="Chiudi">×</button></div><iframe id="humanoidFrame" title="Mira Humanoid" src="about:blank" allow="autoplay"></iframe></div>
 <div id="pop" hidden><button id="pmn" aria-label="Riduci a icona" title="Riduci">−</button><button id="px" aria-label="Chiudi">×</button><div class="nm" id="pn"></div><div class="path" id="pp"></div><div class="st" id="ps"></div><p id="pd"></p><div id="psys"></div><h2>MECCANICA</h2><ul id="pm"></ul></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
@@ -312,6 +329,8 @@ function handleCommand(m){try{switch(m.action){
  case"run":if(m.scenario&&S[m.scenario])run(m.scenario);break;
  case"say":if(m.text)say("j",esc(String(m.text)));break;
  case"set_task":setTR(m.progress,m.status);break;
+ case"top_view":setTopView(m.on);break;
+ case"reveal":revealHumanoid(m.on);break;
  default:break}}catch(e){}}
 try{const ev=new EventSource(API.events);ev.onopen=()=>{bridgeConnected=true;showBridgeState()};ev.onerror=()=>{bridgeConnected=false;showBridgeState()};ev.onmessage=e=>{try{handleEvent(JSON.parse(e.data))}catch(x){}}}catch(e){}
 // Toggle plugin dal runtime (click su un pianeta plugin nella mappa).
@@ -319,6 +338,19 @@ function togglePlugin(plugin){if(!bridgeConnected||!plugin||!plugin.name)return;
 // Tab SISTEMA: instrada le azioni al runtime (ui.py _system_action).
 function sysAction(a){if(!bridgeConnected){say("system","Bridge non connesso: azione '"+a+"' non inviata.");return}post("/api/system",{action:a}).catch(e=>say("system","Azione '"+a+"' non riuscita: "+e.message))}
 document.querySelectorAll("#sistema .sysrow").forEach(r=>{const b=r.querySelector(".sysbtn");if(b)b.onclick=()=>sysAction(r.dataset.a)});
+// ── Visione dall'alto, umanoide ("Jarvis rivelati"), scala layout ───────────
+let topView=false;
+function setTopView(on){topView=on=on===undefined?!topView:on;$("topview").classList.toggle("on",on);if(on){tP=1.5;dist=Math.max(dist,20)}else{tP=.38}}
+$("topview").onclick=()=>setTopView();
+// Umanoide (Mira). "Jarvis rivelati" lo fa comparire.
+const HUMANOID_URL="https://mira-humanoid.vercel.app/";
+let humanoidLoaded=false;
+function revealHumanoid(on){on=on===undefined?$("humanoidWrap").hidden:on;const w=$("humanoidWrap");w.hidden=!on;$("humanoid").classList.toggle("on",on);if(on&&!humanoidLoaded){$("humanoidFrame").src=HUMANOID_URL;humanoidLoaded=true}if(on)say("system","Jarvis rivelati — umanoide attivo.")}
+$("humanoid").onclick=()=>revealHumanoid();
+$("humanoidClose").onclick=()=>revealHumanoid(false);
+// Rimpicciolisci / ingrandisci i layout (scala i pannelli HUD).
+$("scale").oninput=e=>{const v=Number(e.target.value)||100;document.querySelectorAll(".panel").forEach(p=>p.style.fontSize=(v/100)+"em");document.querySelector(".hud").style.zoom=v/100};
+// ── Fine ─────────────────────────────────────────────────────────────────────
 // ── Fine bridge ──────────────────────────────────────────────────────────────
 function ask(text){say("u",esc(text));const n=norm(text);amp=1;setTimeout(()=>{if(!token||true)amp=.25},1200);
  if(bridgeConnected){post(API.chat,{text}).catch(e=>say("system","Invio al runtime non riuscito: "+e.message));return}
