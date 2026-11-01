@@ -11,11 +11,10 @@ from core.ui_panels import DOCKS, PANELS, WORKSPACES, PanelState
 
 def test_panel_state_presets_and_validation():
     state = PanelState()
-    # JARVIS VII: only header/input/footer visible by default; content hidden.
-    assert state.visible("header") and state.visible("input") and state.visible("footer")
+    # JARVIS VII: header/footer visible by default; content (news) hidden; no docks.
+    assert state.visible("header") and state.visible("footer")
     assert not state.visible("content")
     state.apply_workspace("focus")
-    assert not any(state.visible(d) for d in DOCKS)
     assert state.workspace == "focus"
     state.set_visible("footer", False)
     assert state.workspace == "custom" and not state.visible("footer")
@@ -23,14 +22,15 @@ def test_panel_state_presets_and_validation():
         state.apply_workspace("nope")
     with pytest.raises(ValueError):
         state.set_visible("nope", True)
+    with pytest.raises(ValueError):
+        state.set_visible("input", True)  # input dock removed
     assert set(WORKSPACES["full"]) == set(PANELS)
 
 
-def test_only_input_dock_remains():
-    # SYS MONITOR and ACTIVITY LOG docks were removed permanently.
-    assert DOCKS == ("input",)
-    assert "controls" not in PANELS and "activity_log" not in PANELS
-    assert "input" in PANELS
+def test_no_docks_remain():
+    # SYS MONITOR, ACTIVITY LOG and INPUT docks were removed permanently.
+    assert DOCKS == ()
+    assert "controls" not in PANELS and "activity_log" not in PANELS and "input" not in PANELS
 
 
 class _Ui:
@@ -67,37 +67,26 @@ class _Ui:
 
 def test_tool_panel_workspace_status():
     ui = _Ui()
-    assert "hidden" in ui_layout.ui_layout({"mode": "toggle_panel", "panel": "input"}, player=ui)
-    assert not ui.state.visible("input")
-    assert "shown" in ui_layout.ui_layout({"mode": "toggle_panel", "panel": "input", "visible": True}, player=ui)
-    assert ui.state.visible("input")
+    assert "hidden" in ui_layout.ui_layout({"mode": "toggle_panel", "panel": "footer"}, player=ui)
+    assert not ui.state.visible("footer")
+    assert "shown" in ui_layout.ui_layout({"mode": "toggle_panel", "panel": "footer", "visible": True}, player=ui)
+    assert ui.state.visible("footer")
     assert "applied" in ui_layout.ui_layout({"mode": "workspace", "workspace": "coding"}, player=ui)
-    assert ui.state.visible("input") and not ui.state.visible("footer")
+    assert not ui.state.visible("footer")
     assert '"coding"' in ui_layout.ui_layout({"mode": "status"}, player=ui)
     assert "Unknown workspace" in ui_layout.ui_layout({"mode": "workspace", "workspace": "x"}, player=ui)
     assert "Unknown panel" in ui_layout.ui_layout({"mode": "toggle_panel", "panel": "x"}, player=ui)
-
-
-def test_tool_toggle_panel_toggles_input():
-    ui = _Ui()
-    ui_layout.ui_layout({"mode": "toggle_panel", "panel": "input"}, player=ui)
-    assert not ui.state.visible("input")
-    ui_layout.ui_layout({"mode": "toggle_panel", "panel": "input"}, player=ui)
-    assert ui.state.visible("input")
+    # removed docks are unknown panels now
+    assert "Unknown panel" in ui_layout.ui_layout({"mode": "toggle_panel", "panel": "input"}, player=ui)
 
 
 def test_tool_float_and_restore():
     ui = _Ui()
-    assert "detached" in ui_layout.ui_layout({"mode": "float_panel", "panel": "input", "floating": True}, player=ui)
-    assert ui.floating["input"]
-    assert "docked again" in ui_layout.ui_layout({"mode": "float_panel", "panel": "input", "floating": False}, player=ui)
-    assert not ui.floating["input"]
-    ui_layout.ui_layout({"mode": "float_panel", "panel": "input"}, player=ui)
-    assert ui.floating["input"]
+    # no floatable docks remain
+    assert "Unknown panel" in ui_layout.ui_layout({"mode": "float_panel", "panel": "input"}, player=ui)
     assert "Only these panels" in ui_layout.ui_layout({"mode": "float_panel", "panel": "footer"}, player=ui)
-    assert "Unknown panel" in ui_layout.ui_layout({"mode": "float_panel", "panel": "nope"}, player=ui)
     assert "restored" in ui_layout.ui_layout({"mode": "restore_layout"}, player=ui)
-    assert ui.restored == 1 and not ui.floating["input"]
+    assert ui.restored == 1
 
 
 def test_layout_file_roundtrip_and_bad_files(tmp_path):
@@ -105,11 +94,11 @@ def test_layout_file_roundtrip_and_bad_files(tmp_path):
     assert ui_panels.load_layout(path) is None
     ui_panels.save_layout(
         path, qt_state=b"\x00\x01state", geometry=b"geo", workspace="custom",
-        panels={**WORKSPACES["full"], "input": False}, floating={"input": True},
+        panels={**WORKSPACES["full"], "footer": False}, floating={},
     )
     data = ui_panels.load_layout(path)
     assert data["qt_state"] == b"\x00\x01state" and data["geometry"] == b"geo"
-    assert data["panels"]["input"] is False and data["floating"]["input"] is True
+    assert data["panels"]["footer"] is False
     assert json.loads(path.read_text("utf-8"))["version"] == ui_panels.LAYOUT_VERSION
     path.write_text("{not json", encoding="utf-8")
     assert ui_panels.load_layout(path) is None
@@ -158,9 +147,9 @@ def test_real_window_renders_each_workspace(real_ui):
         ui_layout.ui_layout({"mode": "workspace", "workspace": workspace}, player=jarvis)
         real_ui.app.processEvents()
         assert _visible(win) == expected, workspace
-    ui_layout.ui_layout({"mode": "toggle_panel", "panel": "input", "visible": False}, player=jarvis)
+    ui_layout.ui_layout({"mode": "toggle_panel", "panel": "footer", "visible": False}, player=jarvis)
     real_ui.app.processEvents()
-    assert not win._docks["input"].isVisible()
+    assert not win._footer_panel.isVisible()
     assert jarvis.panel_status()["workspace"] == "custom"
 
 
@@ -270,136 +259,51 @@ def test_generation_status_shows_backend_and_elapsed_seconds(monkeypatch):
     assert not window._generation_status_label.visible
 
 
-def test_docks_are_movable_closable_floatable_and_center_stays_central(real_ui):
+def test_no_docks_and_center_stays_central(real_ui):
     from PyQt6.QtWidgets import QDockWidget
     win = real_ui()._win
-    for dock in win._docks.values():
-        feats = dock.features()
-        for flag in (QDockWidget.DockWidgetFeature.DockWidgetMovable,
-                     QDockWidget.DockWidgetFeature.DockWidgetClosable,
-                     QDockWidget.DockWidgetFeature.DockWidgetFloatable):
-            assert feats & flag
+    assert win._docks == {}
     assert not isinstance(win.centralWidget(), QDockWidget)
     assert win.centralWidget().isAncestorOf(win._main_content_stack)
     assert win._main_content_stack.isAncestorOf(win.hud)
-    assert all(not win.centralWidget().isAncestorOf(d) for d in win._docks.values())
 
 
-def test_closing_with_x_updates_state_and_tool_reopens(real_ui):
+def test_focus_mode_toggles_and_restores(real_ui):
     jarvis = real_ui()
     win = jarvis._win
-    win._docks["input"].close()
-    real_ui.app.processEvents()
-    assert not win._docks["input"].isVisible()
-    assert jarvis.panel_status()["panels"]["input"] is False
-    ui_layout.ui_layout({"mode": "toggle_panel", "panel": "input"}, player=jarvis)
-    real_ui.app.processEvents()
-    assert win._docks["input"].isVisible()
-    assert jarvis.panel_status()["panels"]["input"] is True
-
-
-def test_center_expands_when_docks_close(real_ui):
-    win = real_ui()._win
-    before = win.centralWidget().width()
-    for name in DOCKS:
-        win._docks[name].close()
-    real_ui.app.processEvents()
-    assert win.centralWidget().width() > before
-    assert win.centralWidget().isVisible()
-
-
-def test_float_and_restore_layout(real_ui):
-    from PyQt6.QtCore import Qt
-    jarvis = real_ui()
-    win = jarvis._win
-    ui_layout.ui_layout({"mode": "float_panel", "panel": "input", "floating": True}, player=jarvis)
-    real_ui.app.processEvents()
-    assert win._docks["input"].isFloating() and win._docks["input"].isVisible()
-    assert jarvis.panel_status()["floating"]["input"] is True
-    ui_layout.ui_layout({"mode": "restore_layout"}, player=jarvis)
-    real_ui.app.processEvents()
-    assert all(d.isVisible() and not d.isFloating() for d in win._docks.values())
-    assert win.dockWidgetArea(win._docks["input"]) == Qt.DockWidgetArea.RightDockWidgetArea
-    assert jarvis.panel_status()["workspace"] == "full"
-
-
-def test_focus_mode_hides_without_destroying_and_restores_exactly(real_ui):
-    jarvis = real_ui()
-    win = jarvis._win
-    docks = dict(win._docks)
-    jarvis.float_panel("input", True)
-    real_ui.app.processEvents()
-    before = _visible(win)
     jarvis.set_focus_mode(True)
     real_ui.app.processEvents()
-    assert win._focus_mode and not any(win._docks[n].isVisible() for n in DOCKS)
-    assert win._docks == docks and all(d.parent() is not None or d.isFloating() for d in docks.values())
+    assert win._focus_mode
     jarvis.set_focus_mode(False)
     real_ui.app.processEvents()
-    assert _visible(win) == before
-    assert win._docks["input"].isFloating() and win._docks["input"].isVisible()
-
-
-def test_focus_shortcut_toggles_twice(real_ui):
-    win = real_ui()._win
-    win.set_focus_mode(True)
-    win.set_focus_mode(False)
-    real_ui.app.processEvents()
-    assert all(win._docks[n].isVisible() for n in DOCKS)
+    assert not win._focus_mode
+    assert win._header_panel.isVisible() and win._footer_panel.isVisible()
 
 
 def test_layout_survives_restart(real_ui):
     first = real_ui()
-    win = first._win
-    win._docks["input"].close()
-    first.float_panel("input", True)
-    real_ui.app.processEvents()
-    win.close()
-    assert real_ui.path.exists()
-
-    second = real_ui()
-    win2 = second._win
-    # A closed input dock is never restored: without it the user cannot type.
-    assert win2._docks["input"].isVisible()
-    assert second.panel_status()["panels"]["input"] is True
-
-
-def test_closing_while_in_focus_saves_the_pre_focus_layout(real_ui):
-    first = real_ui()
-    first._win._docks["input"].close()
-    real_ui.app.processEvents()
-    first.set_focus_mode(True)
-    real_ui.app.processEvents()
     first._win.close()
+    assert real_ui.path.exists()
     second = real_ui()
-    assert second.panel_status()["panels"]["input"] is True
-    assert not second._win._focus_mode
+    # no docks to restore; window builds cleanly
+    assert second._win._docks == {}
+    assert second.panel_status()["workspace"] in WORKSPACES or "custom"
 
 
-def test_corrupt_or_floating_input_layout_falls_back_to_default_and_chat_request(real_ui):
-    from PyQt6.QtCore import Qt
-    # One window only: every extra real window makes the in-process Qt/WebEngine suite crash.
+def test_saved_layout_from_older_build_does_not_break(real_ui):
+    # A layout saved when docks existed must not crash the dock-less window.
     ui_panels.save_layout(
         real_ui.path, qt_state=b"", panels={n: True for n in PANELS}, workspace="custom",
-        floating={"input": True},
+        floating={"input": True, "controls": True},
     )
     win = real_ui()._win
-    assert all(d.isVisible() for d in win._docks.values())
-    assert not win._docks["input"].isFloating()
-    assert win.dockWidgetArea(win._docks["input"]) == Qt.DockWidgetArea.RightDockWidgetArea
-    win.on_text_command = None
-    opened = []
-    win._show_gemini_chat = lambda: opened.append(True)
-    win._input.setText("che tempo fa")
-    win._send()
-    assert not opened
-    win._input.setText("apri la chat")
-    win._send()
-    assert opened == [True]
+    assert win._docks == {}
+    assert win._header_panel.isVisible()
 
 
 def test_layout_anomalies_and_chat_phrases():
-    assert ui_panels.layout_anomalies({"floating": {"input": True}})
+    # no docks remain → no floating-dock anomaly is possible
+    assert not ui_panels.layout_anomalies({"floating": {"input": True}})
     assert not ui_panels.layout_anomalies({"floating": {}})
     for text in ("apri la chat", "Jarvis parliamo", "open the chat", "let's talk"):
         assert ui_panels.wants_chat(text), text

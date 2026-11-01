@@ -1251,6 +1251,42 @@ class _NullLog:
         pass
 
 
+class _NullInput:
+    """No-op stand-in for the removed COMMAND INPUT field (HTML HUD has chat)."""
+    def text(self) -> str:
+        return ""
+
+    def setText(self, _text: str) -> None:
+        pass
+
+    def clear(self) -> None:
+        pass
+
+    def setFocus(self) -> None:
+        pass
+
+
+class _NullDropZone:
+    """No-op stand-in for the removed FILE UPLOAD drop zone."""
+    def current_file(self):
+        return None
+
+
+class _NullLabel:
+    """No-op stand-in for labels living in removed panels."""
+    def setText(self, _text: str) -> None:
+        pass
+
+    def clear(self) -> None:
+        pass
+
+    def hide(self) -> None:
+        pass
+
+    def show(self) -> None:
+        pass
+
+
 class LogWidget(QTextEdit):
     _sig = pyqtSignal(str)
 
@@ -3329,6 +3365,12 @@ class MainWindow(QMainWindow):
         root.addWidget(self._footer_panel)
         # ACTIVITY LOG dock removed: absorb append_log calls with a no-op.
         self._log = _NullLog()
+        # INPUT dock removed (file upload / command input / task runner live in
+        # the HTML HUD): absorb references with no-op stand-ins.
+        self._input = _NullInput()
+        self._drop_zone = _NullDropZone()
+        self._file_hint = _NullLabel()
+        self._generation_status_label = _NullLabel()
         self._build_docks()
 
         # Quick-access drawer (floating overlay, built after central widget layout is done)
@@ -3426,11 +3468,9 @@ class MainWindow(QMainWindow):
         self._layout_timer.start(5000)
 
     # --- Dock layout ---------------------------------------------------------
-    # JARVIS VII: only the INPUT dock remains. SYS MONITOR and ACTIVITY LOG were
-    # removed permanently (the HTML HUD already provides them).
-    _DOCK_TITLES = {
-        "input": "▸ INPUT",
-    }
+    # JARVIS VII: all docks removed — SYS MONITOR, ACTIVITY LOG and INPUT
+    # (file upload / command input / task runner) are provided by the HTML HUD.
+    _DOCK_TITLES: dict[str, str] = {}
     _pre_focus = None
     _last_saved_layout = b""
 
@@ -3440,20 +3480,8 @@ class MainWindow(QMainWindow):
             | QMainWindow.DockOption.AllowNestedDocks
             | QMainWindow.DockOption.AllowTabbedDocks
         )
-        panels = {
-            "input": (self._build_input_panel(), Qt.DockWidgetArea.RightDockWidgetArea),
-        }
         self._docks: dict[str, HudDock] = {}
         self._dock_floating = {name: False for name in DOCKS}
-        for name, (widget, area) in panels.items():
-            dock = HudDock(name, self._DOCK_TITLES[name], widget, self)
-            dock.closed_by_user.connect(self._on_dock_closed)
-            dock.topLevelChanged.connect(
-                lambda floating, n=name: self._dock_floating.__setitem__(n, bool(floating))
-            )
-            self.addDockWidget(area, dock)
-            self._docks[name] = dock
-        self.resizeDocks([self._docks["input"]], [_RIGHT_W], Qt.Orientation.Horizontal)
         self._default_state = self.saveState(LAYOUT_VERSION)
         self._header_panel.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._header_panel.customContextMenuRequested.connect(
@@ -3540,14 +3568,7 @@ class MainWindow(QMainWindow):
             self.restoreState(self._default_state, LAYOUT_VERSION)
         workspace = data["workspace"]
         self._panel_state.restore(data["panels"], "custom" if workspace == "focus" else workspace)
-        # Without the input dock the user cannot type, so a saved "closed" state is never restored.
-        if not self._panel_state.visible("input"):
-            self._panel_state.set_visible("input", True)
-            self._docks["input"].setVisible(True)
         self._render_panels()
-        # Input must never end up floating, whatever the restored Qt state says.
-        if self._docks["input"].isFloating():
-            self._docks["input"].setFloating(False)
         self._last_saved_layout = repr(
             sorted(self._layout_snapshot().items(), key=lambda kv: kv[0])
         ).encode()
@@ -5082,95 +5103,6 @@ class MainWindow(QMainWindow):
         self._clock_lbl.setText(time.strftime("%H:%M:%S"))
         self._date_lbl.setText(time.strftime("%a %d %b %Y"))
 
-    def _build_input_panel(self) -> QWidget:
-        w = QWidget()
-        w.setMinimumWidth(_LEFT_W)
-        w.setStyleSheet(f"background: {C.DARK};")
-        lay = QVBoxLayout(w)
-        lay.setContentsMargins(8, 8, 8, 8)
-        lay.setSpacing(6)
-
-        def _sec(txt):
-            l = QLabel(f"▸ {txt}")
-            l.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
-            l.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent;")
-            return l
-
-        lay.addWidget(_sec("FILE UPLOAD"))
-        self._drop_zone = FileDropZone()
-        self._drop_zone.file_selected.connect(self._on_file_selected)
-        lay.addWidget(self._drop_zone)
-
-        self._file_hint = QLabel("No file loaded — drop or click above to upload")
-        self._file_hint.setFont(QFont("Courier New", 7))
-        self._file_hint.setStyleSheet(f"color: {C.TEXT_MED}; background: transparent;")
-        self._file_hint.setWordWrap(True)
-        lay.addWidget(self._file_hint)
-
-        sep2 = QFrame(); sep2.setFrameShape(QFrame.Shape.HLine)
-        sep2.setStyleSheet(f"color: {C.BORDER}; margin: 2px 0;")
-        lay.addWidget(sep2)
-
-        lay.addWidget(_sec("COMMAND INPUT"))
-        lay.addLayout(self._build_input_row())
-
-        self._task_runner_label = QLabel("TASK RUNNER: 0% - IDLE")
-        self._task_runner_label.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
-        self._task_runner_label.setStyleSheet(
-            f"color: {C.TEXT_MED}; background: transparent;"
-        )
-        lay.addWidget(self._task_runner_label)
-        self._task_runner_progress = QProgressBar()
-        self._task_runner_progress.setRange(0, 100)
-        self._task_runner_progress.setValue(0)
-        self._task_runner_progress.setTextVisible(True)
-        self._task_runner_progress.setFormat("%p%")
-        self._task_runner_progress.setFixedHeight(12)
-        self._task_runner_progress.setStyleSheet(f"""
-            QProgressBar {{
-                background: {C.BAR_BG}; border: 1px solid {C.BORDER};
-                border-radius: 2px; color: {C.TEXT}; text-align: center;
-            }}
-            QProgressBar::chunk {{ background: {C.PRI_DIM}; }}
-        """)
-        lay.addWidget(self._task_runner_progress)
-        self._generation_status_label = QLabel()
-        self._generation_status_label.setFont(QFont("Courier New", 7, QFont.Weight.Bold))
-        self._generation_status_label.setStyleSheet(
-            f"color: {C.ACC}; background: transparent;"
-        )
-        self._generation_status_label.hide()
-        lay.addWidget(self._generation_status_label)
-
-        self._interrupt_btn = QPushButton("✋  INTERRUPT  [ESC]")
-        self._interrupt_btn.setFixedHeight(34)
-        self._interrupt_btn.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
-        self._interrupt_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._interrupt_btn.setStyleSheet(f"""
-            QPushButton {{
-                background: #140008; color: {C.MUTED_C};
-                border: 1px solid {C.MUTED_C}; border-radius: 3px;
-            }}
-            QPushButton:hover {{
-                background: #200010; border: 1px solid #ff6688;
-            }}
-            QPushButton:pressed {{
-                background: #300018;
-            }}
-        """)
-        self._interrupt_btn.clicked.connect(self._do_interrupt)
-        lay.addWidget(self._interrupt_btn)
-
-        self._mute_btn = QPushButton("🎙  MICROPHONE ACTIVE")
-        self._mute_btn.setFixedHeight(30)
-        self._mute_btn.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
-        self._mute_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._mute_btn.clicked.connect(self._toggle_mute)
-        self._style_mute_btn()
-        lay.addWidget(self._mute_btn)
-
-        return w
-
     def _build_quick_drawer(self) -> QWidget:
         """Floating overlay panel shown when the ⚙ header button is toggled."""
         _BTN_STYLE_PRI = f"""
@@ -5251,12 +5183,9 @@ class MainWindow(QMainWindow):
         cust_btn.clicked.connect(self._open_customize)
         lay.addWidget(cust_btn)
 
-        self._brief_btn = QPushButton()
-        self._brief_btn.setFixedHeight(26)
-        self._brief_btn.setFont(QFont("Courier New", 7))
-        self._brief_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._brief_btn.clicked.connect(self._toggle_brief)
-        lay.addWidget(self._brief_btn)
+        # MORNING BRIEF toggle removed with the INPUT dock (no _brief_btn attribute:
+        # _update_brief_btn's hasattr guard no-ops).
+        lay.addWidget(QWidget())  # spacing placeholder keeps drawer layout stable
 
         audio_btn = QPushButton("🎧  AUDIO DEVICES")
         audio_btn.setFixedHeight(26)
@@ -5347,37 +5276,6 @@ class MainWindow(QMainWindow):
         self._quick_drawer.setFixedWidth(_W)
         self._quick_drawer.adjustSize()
         self._quick_drawer.setGeometry(12, 54, _W, self._quick_drawer.sizeHint().height())
-
-    def _build_input_row(self) -> QHBoxLayout:
-        row = QHBoxLayout(); row.setSpacing(5)
-        self._input = QLineEdit()
-        self._input.setPlaceholderText("> Waiting for input...")
-        self._input.setFont(QFont("Courier New", 9))
-        self._input.setFixedHeight(30)
-        self._input.setStyleSheet(f"""
-            QLineEdit {{
-                background: #000d14; color: {C.WHITE};
-                border: 1px solid {C.BORDER}; border-radius: 3px; padding: 3px 7px;
-            }}
-            QLineEdit:focus {{ border: 1px solid {C.PRI}; }}
-        """)
-        self._input.returnPressed.connect(self._send)
-        row.addWidget(self._input)
-
-        send = QPushButton("▸")
-        send.setFixedSize(30, 30)
-        send.setFont(QFont("Courier New", 11, QFont.Weight.Bold))
-        send.setCursor(Qt.CursorShape.PointingHandCursor)
-        send.setStyleSheet(f"""
-            QPushButton {{
-                background: {C.PANEL}; color: {C.PRI};
-                border: 1px solid {C.PRI_DIM}; border-radius: 3px;
-            }}
-            QPushButton:hover {{ background: {C.PRI_GHO}; border: 1px solid {C.PRI}; }}
-        """)
-        send.clicked.connect(self._send)
-        row.addWidget(send)
-        return row
 
     def _build_content_panel(self) -> QWidget:
         """
@@ -6139,6 +6037,10 @@ class MainWindow(QMainWindow):
             self._log.append_log("SYS: Microphone active.")
 
     def _style_mute_btn(self):
+        # INPUT dock removed: the mute button no longer exists; the HUD shows
+        # the microphone state. Keep the method so callers don't break.
+        if not hasattr(self, "_mute_btn"):
+            return
         if self._muted:
             self._mute_btn.setText("🔇  MICROPHONE MUTED")
             self._mute_btn.setStyleSheet(f"""

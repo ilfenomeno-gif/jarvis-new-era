@@ -9,21 +9,21 @@ import re
 from pathlib import Path
 
 # header/footer/content live in the central area; the DOCKS are movable, closable and floatable.
-# JARVIS VII: the SYS MONITOR ("controls") and ACTIVITY LOG docks were removed
-# permanently (the HTML HUD already provides them). Only the INPUT dock remains.
+# JARVIS VII: all docks removed — SYS MONITOR, ACTIVITY LOG and INPUT
+# (file upload / command input / task runner) are provided by the HTML HUD.
 # The "content" (news) panel stays in PANELS (other modules call show_content)
 # but is hidden in every workspace.
-DOCKS = ("input",)
-PANELS = ("header", "input", "content", "footer")
+DOCKS: tuple[str, ...] = ()
+PANELS = ("header", "content", "footer")
 
 # Names the previous layout (and natural speech) used: one name can cover several panels.
 ALIASES: dict[str, tuple[str, ...]] = {}
 
 WORKSPACES: dict[str, dict[str, bool]] = {
-    "full":   {"header": True,  "input": True,  "content": False, "footer": True},
-    "focus":  {"header": True,  "input": False, "content": False, "footer": True},
-    "coding": {"header": True,  "input": True,  "content": False, "footer": False},
-    "recon":  {"header": False, "input": False, "content": False, "footer": False},
+    "full":   {"header": True,  "content": False, "footer": True},
+    "focus":  {"header": True,  "content": False, "footer": True},
+    "coding": {"header": True,  "content": False, "footer": False},
+    "recon":  {"header": False, "content": False, "footer": False},
 }
 
 LAYOUT_VERSION = 1
@@ -71,12 +71,9 @@ class PanelState:
 
 
 def layout_anomalies(data: dict) -> list[str]:
-    """Why a loaded layout must be ignored. The input dock is never floating by default and
-    must stay reachable: a saved layout that says otherwise is a corrupt or stranded one."""
-    problems = []
-    if (data.get("floating") or {}).get("input"):
-        problems.append("input floating")
-    return problems
+    """Why a loaded layout must be ignored. No docks remain in JARVIS VII, so
+    there is no dock state that can strand the user."""
+    return []
 
 
 _CHAT_REQUEST = re.compile(
