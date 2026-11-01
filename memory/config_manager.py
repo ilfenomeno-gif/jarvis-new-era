@@ -259,20 +259,7 @@ def save_voice(voice_name: str) -> None:
     CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
 
 
-def get_brief_enabled() -> bool:
-    return load_api_keys().get("morning_brief_enabled", True)
-
-
-def save_brief_enabled(enabled: bool) -> None:
-    ensure_config_dir()
-    data: dict = {}
-    if CONFIG_FILE.exists():
-        try:
-            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
-        except Exception:
-            data = {}
-    data["morning_brief_enabled"] = enabled
-    CONFIG_FILE.write_text(json.dumps(data, indent=4), encoding="utf-8")
+# Morning briefing removed (JARVIS VII): get_brief_enabled/save_brief_enabled deleted.
 
 
 # ── Audio devices ────────────────────────────────────────────────────────────

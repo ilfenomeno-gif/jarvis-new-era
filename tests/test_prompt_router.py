@@ -94,32 +94,5 @@ def test_system_prompt_logs_path_without_logging_prompt_contents(tmp_path):
     )
 
 
-def test_startup_briefing_uses_italian_despite_saved_language():
-    main_path = PROJECT_ROOT / "main.py"
-    tree = ast.parse(main_path.read_text(encoding="utf-8"), filename=str(main_path))
-    function = next(
-        node
-        for node in tree.body
-        if isinstance(node, ast.FunctionDef)
-        and node.name == "_build_startup_briefing_language_prompts"
-    )
-    module = ast.fix_missing_locations(ast.Module(body=[function], type_ignores=[]))
-    namespace = {"__name__": "main"}
-    exec(compile(module, str(main_path), "exec"), namespace)
-
-    greeting_prompt, language_instruction = namespace[
-        "_build_startup_briefing_language_prompts"
-    ](
-        "08:30",
-        {
-            "language": {"value": "Traditional Chinese"},
-            "name": {"value": "Marco"},
-        },
-        "",
-    )
-
-    assert "translated naturally into Italian" in greeting_prompt
-    assert "Speak only in Italian" in greeting_prompt
-    assert "Speak only in Italian" in language_instruction
-    assert "Traditional Chinese" not in greeting_prompt + language_instruction
-    assert "Marco" in greeting_prompt
+# test_startup_briefing_uses_italian_despite_saved_language removed:
+# the morning briefing (and _build_startup_briefing_language_prompts) was removed.
