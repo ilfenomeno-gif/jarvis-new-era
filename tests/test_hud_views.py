@@ -20,6 +20,9 @@ def test_hud_html_has_top_view_humanoid_scale():
     assert "<body>" in html
     assert "chat-only" not in html
     assert 'id="humanoidWrap" hidden' in html
+    assert '#humanoidWrap{position:fixed;inset:0;width:100vw;height:100vh' in html
+    assert 'body.iris-mode .hud,body.iris-mode #hudRestore,body.iris-mode #pop{display:none!important}' in html
+    assert 'document.body.classList.toggle("iris-mode",on)' in html
     assert 'src="about:blank"' in html
     assert 'let visualMode="map"' in html
     assert 'setVisualMode("mira")' not in html
@@ -37,7 +40,8 @@ def test_hud_html_has_top_view_humanoid_scale():
     assert 'function pick(id,open=true){if(open)setVisualMode("map")' in html
     assert 'function openSystem(id,tr){if(!tr&&touring)' in html and \
            'setVisualMode("map");if((id||"main")===view)' in html
-    assert 'Iris rivelata — umanoide attiva.' in html
+    assert 'Iris rivelata a schermo intero.' in html
+    assert 'premi ENTER per avviare' in html
     # top view
     assert 'id="topview"' in html
     assert "setTopView" in html
@@ -45,7 +49,7 @@ def test_hud_html_has_top_view_humanoid_scale():
     # humanoid
     assert 'id="humanoidWrap"' in html
     assert "revealHumanoid" in html
-    assert 'allow="autoplay"' in html
+    assert 'allow="autoplay; microphone; camera"' in html
     # layout scale
     assert 'id="scale"' in html
     assert 'type="range"' in html
