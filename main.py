@@ -3616,6 +3616,28 @@ class JarvisLive:
             print(f"[Dashboard] Disabled: {e}")
             self._dashboard = None
 
+        # n8n outbox polling (n8n → desktop events, outbound-only, no open port).
+        # Inert unless config/n8n.json has outbox.enabled=true. Events are shown
+        # on the HUD and written to the activity log; they are data, never executed.
+        try:
+            from core.n8n_outbox import OutboxPoller
+            from core.jarvis_runtime import get_runtime
+
+            def _on_n8n_event(text: str) -> None:
+                self.ui.write_log(f"SYS: n8n — {text}")
+                try:
+                    self._hud.say(text, speak=False)
+                except Exception:
+                    pass
+
+            self._n8n_outbox = OutboxPoller(
+                _on_n8n_event, get_runtime().secrets, audit=get_runtime().audit)
+            if self._n8n_outbox.start():
+                self.ui.write_log("SYS: n8n outbox polling attivo.")
+        except Exception as e:
+            print(f"[n8n outbox] Disabled: {e}")
+            self._n8n_outbox = None
+
         # GEV lifecycle hook
         try:
             # GEV lifecycle hook
