@@ -1327,7 +1327,7 @@ class JarvisLive:
             self.ui.write_log(f"ERR: Impossibile aggiornare l'umanoide HUD: {exc}")
             return
 
-        message = "Jarvis rivelati — umanoide attivo." if visible else "Umanoide nascosto."
+        message = "Mira è la visuale principale." if visible else "Mira nascosta; mappa 3D attiva."
         self.ui.write_log(f"SYS: {message}")
         if visible and self.session:
             self.speak("Mi rivelo.")

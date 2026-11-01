@@ -20,13 +20,22 @@ Assistente desktop AI personale (Windows-first), fusione di:
 | n8n → desktop | polling "outbox" (nessuna porta aperta), notifica HUD/log | `core/n8n_outbox.py` |
 | Sandbox plugin | sottoprocesso + IPC JSON dichiarativa, opt-in `PLUGIN["sandboxed"]` | `core/plugin_sandbox.py`, `core/_plugin_sandbox_worker.py` |
 | Redaction estesa | JWT, AWS, Bearer, GitHub PAT | `core/guardrails.py` |
-| Avatar olografico | opt-in via `hud_style="face"` (default `core` invariato) | `ui.py`, `core/avatar.py` |
+| UI Mira + HUD | Mira Humanoid è la visuale iniziale; chat, metriche, tab SISTEMA, tour e comandi restano nell'overlay; `MAPPA 3D` riapre la scena Three.js | `core/jarvis_hud.html`, `actions/hud_control.py` |
+| Avatar desktop nativo | opt-in via `hud_style="face"` (default `core` invariato), indipendente dall'iframe Mira | `ui.py`, `core/avatar.py` |
+
+Mira è incorporata dal sito esterno `https://mira-humanoid.vercel.app/`. I controlli
+propri della pagina (stati, audio, microfono e camera) restano interattivi nell'iframe.
+L'iframe è cross-origin: la HUD non può comandare né sincronizzare internamente gli
+stati di Mira senza un'API supportata dal sito. Camera e microfono dipendono dai
+permessi del browser e del sistema operativo; non vengono attivati dal bridge Jarvis.
 
 ## Stato dei test
 
-Suite `pytest -q -m 'not live'`: **719 passed, 14 skipped, 3 failed**.
-I 3 failed sono in `tests/test_viewer3d.py` e sono **preesistenti nella baseline** `origin/main`
-(`ui.py` chiama `core.viewer3d.save_screenshot`, che non esiste; i test richiedono stack GPU/QtWebEngine reale). Non causati dalle modifiche P0–P5.
+Ultima suite stabile: `python -m pytest -q -m 'not live' --ignore=tests/test_viewer3d.py` —
+**717 passed, 6 skipped, 1 deselected**. I test in `tests/test_viewer3d.py` non sono
+inclusi in questa esecuzione: le esecuzioni complete precedenti hanno segnalato tre
+fallimenti in quell'area e un crash nativo del processo Qt/WebEngine; la causa resta
+da diagnosticare.
 
 ## Documenti
 

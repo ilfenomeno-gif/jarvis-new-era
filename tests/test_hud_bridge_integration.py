@@ -146,7 +146,10 @@ def test_bridge_serves_hud_forwards_chat_and_releases_port():
         bridge.start(window="none")
         with urlopen(bridge.url, timeout=2) as response:
             assert response.status == 200
-            assert b"JARVIS Mark-LIV" in response.read()
+            html = response.read()
+            assert b"JARVIS VII" in html
+            assert b'<body class="mira-mode">' in html
+            assert b'src="https://mira-humanoid.vercel.app/"' in html
 
         payload = json.dumps({"text": "  ciao  "}).encode()
         request = Request(

@@ -196,9 +196,9 @@ class HudBridge:
         """Send a command to the HUD so Jarvis can drive the 3D map UI.
 
         The HUD (jarvis_hud.html) handles these in its `handleEvent` "command"
-        case. Actions: open_system(id), pick(id), tour(), run(scenario),
-        say(text), set_task(progress, status). Unknown actions are ignored by
-        the HUD (fail-safe).
+        case. Actions include map_view(), reveal(on), top_view(on),
+        open_system(id), pick(id), tour(), run(scenario), say(text), and
+        set_task(progress, status). Unknown actions are ignored by the HUD.
         """
         self._broadcast({"type": "command", "action": str(action), **kwargs})
 

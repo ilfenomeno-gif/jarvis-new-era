@@ -18,7 +18,10 @@ _SCENARIOS = (
     "Apri Netflix", "Spegni il PC", "Task multi-fase", "Genera modello 3D",
     "Interroga GEV", "Usa una skill",
 )
-_ACTIONS = ("open_system", "pick", "tour", "run", "say", "set_task", "top_view", "reveal")
+_ACTIONS = (
+    "open_system", "pick", "tour", "run", "say", "set_task",
+    "top_view", "reveal", "map_view",
+)
 
 
 def hud_control(parameters: dict, player=None, **_ignored) -> str:
@@ -65,7 +68,11 @@ def hud_control(parameters: dict, player=None, **_ignored) -> str:
         command("set_task", progress=progress, status=status)
         return outcome.done("hud_control", action="set_task", status=status)
 
-    # top_view / reveal (umanoid) — optional on=true|false to force, omit to toggle
+    if action == "map_view":
+        command("map_view")
+        return outcome.done("hud_control", action=action)
+
+    # top_view / reveal (Mira) — optional on=true|false to force, omit to toggle
     on = params.get("on")
     kwargs = {} if not isinstance(on, bool) else {"on": on}
     command(action, **kwargs)
@@ -75,15 +82,16 @@ def hud_control(parameters: dict, player=None, **_ignored) -> str:
 TOOL = {
     "name": "hud_control",
     "description": (
-        "Drives the JARVIS 3D map HUD. action=open_system|pick with system="
+        "Drives the JARVIS HUD. Mira is the primary visual; the 3D map remains "
+        "available with action=map_view. action=open_system|pick with system="
         + "|".join(_SYSTEMS)
         + " opens/highlights that module. action=tour starts the guided tour. "
         "action=run with scenario=" + "|".join(_SCENARIOS) + " plays a demo scenario. "
         "action=say with text=… shows a message on the HUD. action=set_task with "
         "progress=0-100 and status=… updates the TaskRunner bar. action=top_view "
-        "(optional on=true|false) toggles the top-down view. action=reveal "
-        "(optional on=true|false) shows/hides the humanoid (Mira). Use this to show "
-        "the user a system or scenario on the 3D map."
+        "(optional on=true|false) switches to the top-down map. action=reveal "
+        "(optional on=true|false) shows Mira or returns to the map. Use the map "
+        "actions to show the user a system or scenario."
     ),
     "risk_class": "read",
     "parameters": {

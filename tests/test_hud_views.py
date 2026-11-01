@@ -16,6 +16,20 @@ class _Player:
 
 def test_hud_html_has_top_view_humanoid_scale():
     html = (Path("core") / "jarvis_hud.html").read_text(encoding="utf-8")
+    assert '<body class="mira-mode">' in html
+    assert 'id="humanoidFrame"' in html
+    assert 'src="https://mira-humanoid.vercel.app/"' in html
+    assert 'id="mapview"' in html
+    assert 'id="hudHide"' in html
+    assert 'id="hudRestore"' in html
+    assert 'body.hud-hidden .hud{display:none}' in html
+    assert 'body.hud-hidden #hudRestore{display:block}' in html
+    assert 'function setVisualMode(mode)' in html
+    assert 'case"map_view":setVisualMode' in html
+    assert 'function pick(id,open=true){if(open)setVisualMode("map")' in html
+    assert 'function openSystem(id,tr){if(!tr&&touring)' in html and \
+           'setVisualMode("map");if((id||"main")===view)' in html
+    assert 'Mira come visuale principale' in html
     # top view
     assert 'id="topview"' in html
     assert "setTopView" in html
@@ -23,9 +37,7 @@ def test_hud_html_has_top_view_humanoid_scale():
     # humanoid
     assert 'id="humanoidWrap"' in html
     assert "revealHumanoid" in html
-    assert "mira-humanoid" in html
-    assert 'allow="autoplay"' in html
-    assert 'allow="camera; microphone;' not in html
+    assert 'allow="camera; microphone; autoplay"' in html
     # layout scale
     assert 'id="scale"' in html
     assert 'type="range"' in html
@@ -44,12 +56,16 @@ def test_hud_control_top_view_and_reveal():
     p3 = _Player()
     assert hc.hud_control({"action": "reveal", "on": True}, player=p3).startswith("status=done")
     assert p3.commands[-1] == ("reveal", {"on": True})
+    p4 = _Player()
+    assert hc.hud_control({"action": "map_view"}, player=p4).startswith("status=done")
+    assert p4.commands[-1] == ("map_view", {})
 
 
 def test_hud_control_new_actions_in_contract():
     assert "top_view" in hc.TOOL["parameters"]["properties"]["action"]["description"] or \
            "top_view" in hc.TOOL["description"]
     assert "reveal" in hc.TOOL["description"]
+    assert "map_view" in hc.TOOL["description"]
 
 
 def test_rivelati_phrase_routes_to_reveal():
