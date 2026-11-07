@@ -35,20 +35,99 @@ Quando viene rivelata, Iris sostituisce la mappa a schermo intero e lascia visib
 solo la chat flottante. Il rendering Three.js della mappa viene sospeso mentre Iris
 è aperta; sulla mappa la scena è limitata a 30 FPS e pixel ratio 1,5 per contenere
 il carico GPU.
-L'iframe è cross-origin: la HUD non può rinominare il contenuto interno del sito,
-premere automaticamente il suo pulsante ENTER né sincronizzarne gli stati senza
-un'API supportata dal provider. ENTER richiede un gesto utente per avviare l'audio.
+L'iframe è cross-origin: la HUD non può rinominare o sincronizzare liberamente il
+sito. Nel frame HTTPS dell'origine Mira, JARVIS abilita la riproduzione senza gesto
+e preme automaticamente solo il pulsante iniziale `ENTER`, se presente; così Iris
+entra direttamente senza automatizzare camera o microfono. La navigazione resta
+limitata all'origine Mira. Quando Iris viene mostrata, la voce Live passa a Kore;
+quando si torna alla mappa, JARVIS riprende la voce maschile configurata (o Charon
+se la voce salvata è femminile). Il cambio ricrea la sessione Live per applicare
+la voce.
 L'host Qt consente la pagina principale solo sul
 bridge locale e il frame HTTPS solo per l'origine Mira; nasconde il chrome Qt duplicato
 quando la HUD web è attiva.
 
-## Stato dei test
+## Contratti provider e tracing vocale
 
-Ultima suite stabile: `python -m pytest -q -m 'not live' --ignore=tests/test_viewer3d.py` —
-**717 passed, 6 skipped, 1 deselected**. I test in `tests/test_viewer3d.py` non sono
-inclusi in questa esecuzione: le esecuzioni complete precedenti hanno segnalato tre
-fallimenti in quell'area e un crash nativo del processo Qt/WebEngine; la causa resta
-da diagnosticare.
+La pipeline locale accetta STT, LLM e TTS iniettati secondo i protocolli di
+`providers/base.py`. La suite isolata usa provider mock e verifica i payload,
+lo schema tool, timeout, retry limitati e recovery da JSON di tool call
+malformato, senza avviare Qt o il runtime vocale:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests\test_provider_contracts.py
+```
+
+I retry sono limitati a errori di trasporto, fino a tre tentativi configurabili;
+una risposta LLM o audio TTS già emessa non viene mai ripetuta. I limiti
+predefiniti sono un retry e 60 secondi per tentativo/stallo dello stream. La pipeline emette span
+OpenTelemetry `voice.turn`, `voice.stt`, `voice.llm` e `voice.tts`; le esecuzioni
+di tool vocali emettono `voice.tool`. I transcript non vengono registrati come
+attributi, per non esportare contenuto privato. L'app include l'API
+OpenTelemetry; per raccogliere o esportare span va configurato uno
+`TracerProvider`/exporter nell'host. Gli screenshot 3D validati sono salvati in
+`Pictures\JARVIS\3D`.
+
+## Avvio, logging e test di performance
+
+`JARVIS_LOG_LEVEL` configura il livello del logger Python (default `INFO`, ad
+esempio `DEBUG`). `JARVIS_UI_LAYOUT` seleziona il file di layout HUD/UI;
+`JARVIS_HUD_PORT` cambia la porta locale del bridge (default `8765`, `0` assegna
+una porta effimera). L'opzione CLI `--hud-port` prevale sulla variabile
+d'ambiente, ad esempio `python main.py --hud-port 8766`. I test usano profili
+temporanei e non toccano il layout salvato dell'utente.
+
+La suite automatica non-live imposta Qt offscreen tramite `tests/conftest.py`;
+i test che creano finestre QtWebEngine reali vengono saltati in questa modalita
+per evitare crash nativi. Non serve impostare `CI=true`:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -q -rs -m "not live" --ignore=tests\test_viewer3d.py
+```
+
+Ultima esecuzione locale: **1157 passed, 10 skipped, 5 deselected, 4 xfailed**.
+I test UI QtWebEngine con finestra reale sono al momento **solo locali/manuali**:
+eseguili da una sessione Windows interattiva con display disponibile, senza
+`CI=true` e impostando `QT_QPA_PLATFORM=windows`, ad esempio:
+
+```powershell
+$env:QT_QPA_PLATFORM = "windows"
+.\.venv\Scripts\python.exe -m pytest -q tests\test_ui_panels.py tests\test_viewer3d.py
+```
+
+Non sono eseguiti dal workflow offscreen; non e' configurato un runner desktop
+interattivo dedicato.
+
+Il test di cold start è opt-in e controlla che UI e HUD rispondano senza chiavi
+provider; salta se la porta HUD scelta è già occupata:
+
+```powershell
+$env:QT_QPA_PLATFORM = "offscreen"
+.\.venv\Scripts\python.exe -m pytest -q -m live tests\test_startup.py
+```
+
+I report CLI dei benchmark usano [schema JSON v1](benchmarks/benchmark-report.schema.json).
+Il confronto mediano usa solo report con nome, configurazione e insieme metriche
+compatibili; supera `--max-regression-percent` per cambiare la soglia (default
+10%):
+
+```powershell
+.\.venv\Scripts\python.exe benchmarks\bench_core.py --iterations 1000 --runs 3 --output test-evidence\core.json
+.\.venv\Scripts\python.exe scripts\compare_bench.py test-evidence\baseline.json test-evidence\core.json --max-regression-percent 10
+.\.venv\Scripts\python.exe benchmarks\bench_ttft_live.py --repeats 20 --timeout-seconds 1800 --output test-evidence\ttft.json
+```
+
+Il benchmark TTFT interroga Ollama locale ed è eseguito solo manualmente; non fa
+parte dei test rapidi e non è schedulato in CI. Il job live GitHub è disponibile
+solo con `workflow_dispatch`, dato che la latenza dipende dall'hardware del
+runner. `bench_core.py` è offline e accetta `--iterations` da 200 a 100000 e
+`--runs` da 3 a 5.
+Nei report TTFT, `stream.*` significa tempo al primo contenuto emesso dal motore;
+`buffered.*` significa tempo al completamento della risposta, non TTFT. Il campo
+`metric_semantics` rende esplicita questa distinzione anche nei JSON archiviati.
+La baseline presente usa 20 ripetizioni per prompt/modalità: le mediane sono
+indicative e i percentili di coda non sono ancora stabili; raccogli almeno 50
+campioni per prompt/modalità prima di usare p95/p99 come baseline comparativa.
 
 ## Workflow interno Fables
 
