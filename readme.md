@@ -20,10 +20,14 @@ Assistente desktop AI personale (Windows-first), fusione di:
 | n8n → desktop | polling "outbox" (nessuna porta aperta), notifica HUD/log | `core/n8n_outbox.py` |
 | Sandbox plugin | sottoprocesso + IPC JSON dichiarativa, opt-in `PLUGIN["sandboxed"]` | `core/plugin_sandbox.py`, `core/_plugin_sandbox_worker.py` |
 | Redaction estesa | JWT, AWS, Bearer, GitHub PAT | `core/guardrails.py` |
-| UI Iris + HUD | Mappa 3D iniziale; Iris si mostra su richiesta, chat, metriche, tab SISTEMA, tour e comandi restano nell'overlay | `core/jarvis_hud.html`, `actions/hud_control.py` |
+| UI Iris + HUD | Splash animata iniziale a 705 nodi, poi mappa 3D; Iris si mostra su richiesta, chat, metriche, tab SISTEMA, tour e comandi restano nell'overlay | `core/jarvis_hud.html`, `actions/hud_control.py` |
 | Avatar desktop nativo | opt-in via `hud_style="face"` (default `core` invariato), indipendente dall'iframe Iris | `ui.py`, `core/avatar.py` |
 
-La HUD originale con mappa 3D è la schermata iniziale. L'avatar è presentato come
+La HUD HTML viene mostrata già durante l'avvio di Qt, invece della vecchia HUD
+nativa transitoria; si collega al bridge locale appena è disponibile. Mostra una
+sequenza iniziale animata a 705 nodi, collegata allo stato reale del runtime e con
+chiusura di sicurezza se il bridge non risponde; poi presenta la mappa 3D.
+L'avatar è presentato come
 **Iris** nell'interfaccia, ma viene ancora fornito dal sito esterno
 `https://mira-humanoid.vercel.app/`; viene caricato solo quando si pronuncia o si invia
 il comando esatto **“Iris rivelati”**; **“Iris nasconditi”** lo richiude.

@@ -290,7 +290,7 @@ def test_embedded_hud_loads_only_from_local_bridge():
     ]
 
 
-def test_embedded_hud_becomes_active_and_falls_back_on_load_error():
+def test_embedded_hud_remains_active_when_load_fails():
     class _Panel:
         def __init__(self):
             self.hidden = False
@@ -298,17 +298,18 @@ def test_embedded_hud_becomes_active_and_falls_back_on_load_error():
         def hide(self):
             self.hidden = True
 
-    browser, native, main_stack, center_stack = (
-        object(),
-        object(),
-        _Stack(),
-        _Stack(),
-    )
+    class _Browser:
+        target = QUrl("http://127.0.0.1:8765/")
+
+        def url(self):
+            return self.target
+
+    browser, main_stack, center_stack = _Browser(), _Stack(), _Stack()
     header, content, footer = _Panel(), _Panel(), _Panel()
     window = SimpleNamespace(
         _hud_browser_view=browser,
+        _hud_browser_requested=False,
         _hud_browser_loaded=False,
-        hud=native,
         _hud_cam_stack=center_stack,
         _main_content_stack=main_stack,
         _header_panel=header,
@@ -319,6 +320,13 @@ def test_embedded_hud_becomes_active_and_falls_back_on_load_error():
         _log_sig=_Signal(),
     )
 
+    browser.target = QUrl("about:blank")
+    MainWindow._on_hud_browser_load_finished(window, True)
+    assert not window._hud_browser_loaded
+    assert center_stack.current is None
+
+    window._hud_browser_requested = True
+    browser.target = QUrl("http://127.0.0.1:8765/")
     MainWindow._on_hud_browser_load_finished(window, True)
     assert window._hud_browser_loaded
     assert center_stack.current is browser
@@ -327,7 +335,8 @@ def test_embedded_hud_becomes_active_and_falls_back_on_load_error():
 
     MainWindow._on_hud_browser_load_finished(window, False)
     assert not window._hud_browser_loaded
-    assert center_stack.current is native
+    assert center_stack.current is browser
+    assert MainWindow._active_hud_widget(window) is browser
     assert window._log_sig.messages == [
-        "SYS: Embedded HUD failed to load; using the native HUD instead."
+        "ERR: Embedded HUD failed to load; the legacy HUD remains disabled."
     ]

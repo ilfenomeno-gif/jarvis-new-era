@@ -64,6 +64,18 @@ def test_hud_html_has_top_view_humanoid_scale():
     assert 'case"reveal":revealHumanoid' in html
 
 
+def test_initialization_splash_uses_live_runtime_and_bounded_wait():
+    html = (Path("core") / "jarvis_hud.html").read_text(encoding="utf-8")
+    assert 'id="bootScreen"' in html
+    assert 'id="bootCanvas"' in html
+    assert 'bootNodes=[],bootTotal=705,bootRows=13' in html
+    assert "const exact=weights.map(w=>bootTotal*w/sum)" in html
+    assert '["listening","muted","speaking"].includes(bootState)' in html
+    assert 'finishBootScreen(false,"CORE CONNECTION DELAYED","CHECK STATUS")' in html
+    assert 'handleBootState(assistantState)' in html
+    assert 'case"state":assistantState=m.state||"unknown";showBridgeState();handleBootState(assistantState)' in html
+
+
 def test_hud_control_top_view_and_reveal():
     p = _Player()
     assert hc.hud_control({"action": "top_view"}, player=p).startswith("status=done")

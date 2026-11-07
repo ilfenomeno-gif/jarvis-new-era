@@ -3194,7 +3194,7 @@ class MainWindow(QMainWindow):
         if _ui_color and _ui_color.lower() != DEFAULT_UI_COLOR:
             apply_ui_accent(_ui_color)
 
-        self.setWindowTitle(f"{_display} — MARK LII")
+        self.setWindowTitle("JARVIS VII · IRIS")
         self.setObjectName("jarvisMainWindow")
         self.setMinimumSize(_MIN_W, _MIN_H)
         self.resize(_DEFAULT_W, _DEFAULT_H)
@@ -3318,8 +3318,11 @@ class MainWindow(QMainWindow):
         self._hud_browser_view.loadFinished.connect(
             self._on_hud_browser_load_finished
         )
+        self._hud_browser_requested = False
         self._hud_browser_loaded = False
         self._hud_cam_stack.addWidget(self._hud_browser_view)
+        self._hud_browser_view.page().setBackgroundColor(QColor(C.BG))
+        self._hud_cam_stack.setCurrentWidget(self._hud_browser_view)
 
         self._browser_panel = self._build_browser_panel()
         self._browser_return_widget: QWidget | None = None
@@ -3377,6 +3380,9 @@ class MainWindow(QMainWindow):
         root.addLayout(body, stretch=1)
         self._footer_panel = self._build_footer()
         root.addWidget(self._footer_panel)
+        self._header_panel.hide()
+        self._content_panel.hide()
+        self._footer_panel.hide()
         # ACTIVITY LOG dock removed: absorb append_log calls with a no-op.
         self._log = _NullLog()
         # INPUT dock removed (file upload / command input / task runner live in
@@ -3730,7 +3736,7 @@ class MainWindow(QMainWindow):
         )
 
     def _active_hud_widget(self) -> QWidget:
-        return self._hud_browser_view if self._hud_browser_loaded else self.hud
+        return self._hud_browser_view
 
     def _load_hud_browser(self, url: str) -> None:
         target = QUrl(url)
@@ -3742,22 +3748,24 @@ class MainWindow(QMainWindow):
         ):
             self._log_sig.emit("SYS: HUD browser URL must use the local Jarvis bridge.")
             return
+        self._hud_browser_requested = True
         self._hud_browser_view.load(target)
 
     def _on_hud_browser_load_finished(self, succeeded: bool) -> None:
+        if not self._hud_browser_requested:
+            return
         self._hud_browser_loaded = bool(succeeded)
-        if succeeded:
-            self._hud_cam_stack.setCurrentWidget(self._hud_browser_view)
-            self._main_content_stack.setCurrentWidget(self._hud_cam_stack)
-            self._header_panel.hide()
-            self._content_panel.hide()
-            self._footer_panel.hide()
-            self.setWindowTitle("JARVIS VII · IRIS")
-            self._center_split.setSizes([self._center_split.height(), 0])
-        else:
-            self._hud_cam_stack.setCurrentWidget(self.hud)
+        self._hud_cam_stack.setCurrentWidget(self._hud_browser_view)
+        self._main_content_stack.setCurrentWidget(self._hud_cam_stack)
+        self._header_panel.hide()
+        self._content_panel.hide()
+        self._footer_panel.hide()
+        self.setWindowTitle("JARVIS VII · IRIS")
+        self._center_split.setSizes([self._center_split.height(), 0])
+        if not succeeded:
+            print("[HUD] Embedded HUD failed to load; native HUD fallback is disabled.", flush=True)
             self._log_sig.emit(
-                "SYS: Embedded HUD failed to load; using the native HUD instead."
+                "ERR: Embedded HUD failed to load; the legacy HUD remains disabled."
             )
 
     def _viewer3d_set_hover(self, name: str, text: str) -> None:
@@ -3808,7 +3816,10 @@ class MainWindow(QMainWindow):
             self._viewer3d_pending.append(script)
 
     def _render_panels(self) -> None:
-        if self._hud_browser_loaded:
+        if (
+            self._hud_browser_loaded
+            or self._hud_cam_stack.currentWidget() is self._hud_browser_view
+        ):
             for widget in (
                 self._header_panel,
                 self._content_panel,
@@ -5601,7 +5612,6 @@ class MainWindow(QMainWindow):
 
         lay.addWidget(_fl("[F4] Mute  ·  [F11] Fullscreen"))
         lay.addStretch()
-        lay.addWidget(_fl("By FatihMakes", C.PRI_DIM))
         return w
 
     def _on_file_selected(self, path: str):
@@ -5839,7 +5849,7 @@ class MainWindow(QMainWindow):
         """Update all name/theme-dependent UI elements and persist to config."""
         self._assistant_name = name.strip() or "JARVIS"
         display = self._assistant_name.upper()
-        self.setWindowTitle(f"{display} — MARK LII")
+        self.setWindowTitle("JARVIS VII · IRIS")
         self._title_lbl.setText(display)
         if display in ("JARVIS", "J.A.R.V.I.S"):
             self._sub_lbl.setText("Just A Rather Very Intelligent System")

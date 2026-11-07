@@ -143,6 +143,7 @@ def _visible(win):
 def test_real_window_renders_each_workspace(real_ui):
     jarvis = real_ui()
     win = jarvis._win
+    win._hud_cam_stack.setCurrentWidget(win.hud)
     for workspace, expected in WORKSPACES.items():
         ui_layout.ui_layout({"mode": "workspace", "workspace": workspace}, player=jarvis)
         real_ui.app.processEvents()
@@ -156,6 +157,7 @@ def test_real_window_renders_each_workspace(real_ui):
 def test_embedded_hud_hides_legacy_chrome_and_briefing(real_ui):
     jarvis = real_ui()
     win = jarvis._win
+    win._hud_cam_stack.setCurrentWidget(win.hud)
     win._panel_state.restore(
         {"header": True, "content": True, "footer": True},
         "custom",
@@ -164,6 +166,7 @@ def test_embedded_hud_hides_legacy_chrome_and_briefing(real_ui):
     real_ui.app.processEvents()
     assert _visible(win)["content"]
 
+    win._hud_browser_requested = True
     win._on_hud_browser_load_finished(True)
     real_ui.app.processEvents()
 
@@ -182,6 +185,24 @@ def test_embedded_hud_hides_legacy_chrome_and_briefing(real_ui):
     win._show_content("Briefing", "legacy result")
     real_ui.app.processEvents()
     assert not _visible(win)["content"]
+
+
+def test_new_hud_is_shown_during_startup_without_legacy_credit(real_ui):
+    from PyQt6.QtWidgets import QLabel
+
+    win = real_ui()._win
+    real_ui.app.processEvents()
+
+    assert win._hud_cam_stack.currentWidget() is win._hud_browser_view
+    assert not win._hud_browser_loaded
+    assert win.windowTitle() == "JARVIS VII · IRIS"
+    assert not win._header_panel.isVisible()
+    assert not win._content_panel.isVisible()
+    assert not win._footer_panel.isVisible()
+    footer_text = " ".join(
+        label.text() for label in win._footer_panel.findChildren(QLabel)
+    )
+    assert "FatihMakes" not in footer_text
 
 
 def test_quantum_hud_draws_blueprint_and_uses_runtime_telemetry():
@@ -302,6 +323,7 @@ def test_no_docks_and_center_stays_central(real_ui):
 def test_focus_mode_toggles_and_restores(real_ui):
     jarvis = real_ui()
     win = jarvis._win
+    win._hud_cam_stack.setCurrentWidget(win.hud)
     jarvis.set_focus_mode(True)
     real_ui.app.processEvents()
     assert win._focus_mode
@@ -328,6 +350,8 @@ def test_saved_layout_from_older_build_does_not_break(real_ui):
         floating={"input": True, "controls": True},
     )
     win = real_ui()._win
+    win._hud_cam_stack.setCurrentWidget(win.hud)
+    win._render_panels()
     assert win._docks == {}
     assert win._header_panel.isVisible()
 
