@@ -116,7 +116,7 @@ def test_live_system_prompt_uses_repeated_style_corrections(pattern_store, tmp_p
     monkeypatch.setattr(jarvis_main, "load_memory", lambda: {})
     monkeypatch.setattr(jarvis_main, "format_memory_for_prompt", lambda _memory: "")
     monkeypatch.setattr(jarvis_main, "_load_system_prompt", lambda: "BASE SYSTEM PROMPT")
-    monkeypatch.setattr(jarvis_main, "get_voice", lambda: "Kore")
+    monkeypatch.setattr(jarvis_main, "get_jarvis_voice", lambda: "Charon")
 
     jarvis = object.__new__(jarvis_main.JarvisLive)
     jarvis._pattern_context = "auto"

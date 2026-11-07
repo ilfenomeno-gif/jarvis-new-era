@@ -37,11 +37,21 @@ _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
 class HudBridge:
-    def __init__(self, host: str = "127.0.0.1", port: int = 8765, html_path: Path = HUD_HTML):
+    def __init__(
+        self,
+        host: str = "127.0.0.1",
+        port: int | None = None,
+        html_path: Path = HUD_HTML,
+    ):
+        if port is None:
+            port = int(os.environ.get("JARVIS_HUD_PORT", "8765"))
+        if not 0 <= port <= 65535:
+            raise ValueError("HUD port must be between 0 and 65535.")
         self.host, self.port, self.html_path = host, port, Path(html_path)
         self.on_message: Callable[[str], None] | None = None   # testo scritto nella chat dell'HUD
         self.on_plugin: Callable[[str], None] | None = None    # click su una molecola plugin
         self.on_system: Callable[[str], None] | None = None    # azione dal tab SISTEMA dell'HUD
+        self.on_iris_visibility: Callable[[bool], None] | None = None
         self._clients: set[queue.Queue] = set()
         self._lock = threading.Lock()
         self._stats: dict[str, float | int | str | None] = {
@@ -142,12 +152,15 @@ class HudBridge:
                     bridge._fire(bridge.on_plugin, body["name"][:200])
                 elif self.path == "/api/system" and isinstance(body.get("action"), str):
                     bridge._fire(bridge.on_system, body["action"][:200])
+                elif self.path == "/api/iris" and type(body.get("visible")) is bool:
+                    bridge._fire(bridge.on_iris_visibility, body["visible"])
                 else:
                     return self.send_error(400)
                 self.send_response(204)
                 self.end_headers()
 
         self._server = ThreadingHTTPServer((self.host, self.port), Handler)
+        self.port = int(self._server.server_address[1])
         self._server.daemon_threads = True
         threading.Thread(target=self._server.serve_forever, name="hud-http", daemon=True).start()
         threading.Thread(target=self._stats_loop, name="hud-stats", daemon=True).start()

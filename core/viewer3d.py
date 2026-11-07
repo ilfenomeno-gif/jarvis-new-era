@@ -5,9 +5,15 @@ The page executes only functions in ALLOWED, with arguments passed as JSON
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import json
+import os
 import re
+import zlib
 from pathlib import Path
+from uuid import uuid4
+
 ALLOWED = {
     "flyTo": 2,
     "addMarker": 3,
@@ -32,9 +38,75 @@ HUD_STATES = frozenset({"idle", "listening", "thinking", "speaking", "error", "g
 MAX_PART_INFO = 200
 
 MODELS_DIR = Path(__file__).resolve().parent.parent / "assets" / "viewer3d" / "models"
+SCREENSHOTS_DIR = Path.home() / "Pictures" / "JARVIS" / "3D"
+MAX_SCREENSHOT_BYTES = 20 * 1024 * 1024
+_PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 MAX_MODEL_BYTES = 40 * 1024 * 1024
 _MODEL_NAME = re.compile(r"^((cad|downloads)/)?[A-Za-z0-9][A-Za-z0-9_\-. ]{0,100}\.(glb|gltf)$")
 SUBFOLDERS = ("cad", "downloads")
+
+
+def save_screenshot(data_url: str, output_dir: Path | None = None) -> Path:
+    """Validate a PNG data URL from the viewer and save it under Pictures."""
+    prefix = "data:image/png;base64,"
+    if not isinstance(data_url, str) or not data_url.startswith(prefix):
+        raise ValueError("screenshot must be a base64 PNG data URL")
+    encoded = data_url[len(prefix):]
+    if not encoded or len(encoded) > ((MAX_SCREENSHOT_BYTES + 2) // 3) * 4:
+        raise ValueError("screenshot is empty or too large")
+    try:
+        image = base64.b64decode(encoded, validate=True)
+    except (binascii.Error, ValueError):
+        raise ValueError("screenshot contains invalid base64 data") from None
+    if len(image) > MAX_SCREENSHOT_BYTES:
+        raise ValueError("screenshot is too large")
+    if len(image) < 33 or not image.startswith(_PNG_SIGNATURE):
+        raise ValueError("screenshot is not a valid PNG image")
+    offset = 8
+    has_image_data = False
+    has_end = False
+    while offset < len(image):
+        if len(image) - offset < 12:
+            raise ValueError("screenshot contains a truncated PNG chunk")
+        length = int.from_bytes(image[offset:offset + 4], "big")
+        chunk_end = offset + 12 + length
+        if chunk_end > len(image):
+            raise ValueError("screenshot contains a truncated PNG chunk")
+        chunk_type = image[offset + 4:offset + 8]
+        chunk_data = image[offset + 8:offset + 8 + length]
+        checksum = int.from_bytes(image[offset + 8 + length:chunk_end], "big")
+        if zlib.crc32(chunk_type + chunk_data) & 0xFFFFFFFF != checksum:
+            raise ValueError("screenshot contains a corrupt PNG chunk")
+        if offset == 8:
+            if chunk_type != b"IHDR" or length != 13:
+                raise ValueError("screenshot has an invalid PNG header")
+            width = int.from_bytes(chunk_data[:4], "big")
+            height = int.from_bytes(chunk_data[4:8], "big")
+            if not width or not height or width * height > 100_000_000:
+                raise ValueError("screenshot dimensions are invalid")
+        elif chunk_type == b"IHDR":
+            raise ValueError("screenshot contains multiple PNG headers")
+        elif chunk_type == b"IDAT":
+            has_image_data = True
+        elif chunk_type == b"IEND":
+            if length or not has_image_data or chunk_end != len(image):
+                raise ValueError("screenshot has an invalid PNG end chunk")
+            has_end = True
+            break
+        offset = chunk_end
+    if not has_end:
+        raise ValueError("screenshot is missing its PNG end chunk")
+
+    folder = Path(output_dir) if output_dir is not None else SCREENSHOTS_DIR
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / f"jarvis_3d_{uuid4().hex}.png"
+    temporary = path.with_suffix(".png.tmp")
+    try:
+        temporary.write_bytes(image)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return path
 
 
 def _ensure_pc_cad(folder: Path) -> None:

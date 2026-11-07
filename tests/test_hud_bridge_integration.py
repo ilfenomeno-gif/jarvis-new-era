@@ -8,10 +8,11 @@ from types import SimpleNamespace
 from urllib.request import Request, urlopen
 
 from PyQt6.QtCore import QUrl
+from PyQt6.QtWebEngineCore import QWebEngineSettings
 
 import main
 from core.hud_bridge import HudBridge
-from ui import MainWindow, _HudBrowserPage
+from ui import MainWindow, _configure_iris_page, _HudBrowserPage
 
 
 class _Hud:
@@ -134,15 +135,40 @@ def test_speaking_level_is_forwarded_to_hud():
     assert jarvis._hud.speaking == [(True, 0.65)]
 
 
+def test_iris_visibility_switches_between_feminine_and_masculine_voice(monkeypatch):
+    jarvis = object.__new__(main.JarvisLive)
+    reconnects = []
+    jarvis.request_reconnect = lambda **kwargs: reconnects.append(kwargs)
+    monkeypatch.setattr(main, "get_jarvis_voice", lambda: "Charon")
+    monkeypatch.setattr(main, "get_iris_voice", lambda: "Kore")
+
+    assert jarvis._speech_voice_name() == "Charon"
+    jarvis._on_hud_iris_visibility(True)
+    assert jarvis._speech_voice_name() == "Kore"
+    jarvis._on_hud_iris_visibility(True)
+    jarvis._on_hud_iris_visibility(False)
+    assert jarvis._speech_voice_name() == "Charon"
+    assert reconnects == [
+        {"keep_context": False, "reason": "Iris feminine voice"},
+        {"keep_context": False, "reason": "Jarvis masculine voice"},
+    ]
+
+
 def test_bridge_serves_hud_forwards_chat_and_releases_port():
     with socket.socket() as probe:
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
 
     received = []
+    received_visibility = []
     received_event = threading.Event()
+    visibility_event = threading.Event()
     bridge = HudBridge(port=port)
     bridge.on_message = lambda text: (received.append(text), received_event.set())
+    bridge.on_iris_visibility = lambda visible: (
+        received_visibility.append(visible),
+        visibility_event.set(),
+    )
 
     try:
         bridge.start(window="none")
@@ -169,6 +195,21 @@ def test_bridge_serves_hud_forwards_chat_and_releases_port():
             assert response.status == 204
         assert received_event.wait(2)
         assert received == ["ciao"]
+
+        payload = json.dumps({"visible": True}).encode()
+        request = Request(
+            bridge.url + "api/iris",
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "X-HUD": "1",
+            },
+            method="POST",
+        )
+        with urlopen(request, timeout=2) as response:
+            assert response.status == 204
+        assert visibility_event.wait(2)
+        assert received_visibility == [True]
     finally:
         bridge.stop()
 
@@ -182,6 +223,49 @@ def test_hud_browser_allows_only_local_main_page_and_mira_https_iframe():
     assert not allow(QUrl("https://example.com/"), False)
     assert not allow(QUrl("http://mira-humanoid.vercel.app/"), False)
     assert not allow(QUrl("https://mira-humanoid.vercel.app:444/"), False)
+
+
+def test_iris_page_enters_directly_without_camera_or_microphone_automation():
+    class Settings:
+        def __init__(self):
+            self.attributes = {}
+
+        def setAttribute(self, attribute, value):
+            self.attributes[attribute] = value
+
+    class Scripts:
+        def __init__(self):
+            self.items = []
+
+        def insert(self, script):
+            self.items.append(script)
+
+    class Page:
+        def __init__(self):
+            self._settings = Settings()
+            self._scripts = Scripts()
+
+        def settings(self):
+            return self._settings
+
+        def scripts(self):
+            return self._scripts
+
+    page = Page()
+    _configure_iris_page(page)
+
+    assert page._settings.attributes == {
+        QWebEngineSettings.WebAttribute.PlaybackRequiresUserGesture: False,
+    }
+    assert len(page._scripts.items) == 1
+    script = page._scripts.items[0]
+    assert script.name() == "jarvis-iris-direct-entry"
+    assert script.runsOnSubFrames()
+    assert "location.origin !== \"https://mira-humanoid.vercel.app\"" in script.sourceCode()
+    assert 'button.textContent.trim() === "ENTER"' in script.sourceCode()
+    assert "enter.click()" in script.sourceCode()
+    assert "ENABLE CAMERA" not in script.sourceCode()
+    assert "getUserMedia" not in script.sourceCode()
 
 
 def test_bridge_hud_receives_runtime_and_assistant_state():

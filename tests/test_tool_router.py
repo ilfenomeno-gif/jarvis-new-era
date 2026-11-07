@@ -55,12 +55,19 @@ def test_terminal_run_is_selected_only_for_explicit_terminal_requests():
 
 
 def test_computer_use_tools_are_selected_for_perception_and_input_requests():
-    declarations = [decl("computer_perception"), decl("computer_input")]
+    declarations = [
+        decl("computer_perception"),
+        decl("computer_read_screen"),
+        decl("computer_input"),
+    ]
     router = ToolRouter()
 
-    assert names(
+    assert {
+        "computer_perception",
+        "computer_read_screen",
+    } <= names(
         router.select_for_request("Leggi il testo sullo schermo con OCR", declarations)
-    ) == {"computer_perception"}
+    )
     assert names(
         router.select_for_request("Clicca sul pulsante in Notepad", declarations)
     ) == {"computer_input"}

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import threading
 import time
 import urllib.request
 from pathlib import Path
@@ -25,7 +24,7 @@ def test_hud_html_has_sistema_tab():
 
 
 def test_bridge_system_endpoint_fires_callback():
-    hud = HudBridge()
+    hud = HudBridge(port=0)
     url = hud.start(window="none")
     time.sleep(0.5)
     received = []
@@ -42,7 +41,7 @@ def test_bridge_system_endpoint_fires_callback():
 
 
 def test_bridge_system_endpoint_rejects_bad_body():
-    hud = HudBridge()
+    hud = HudBridge(port=0)
     url = hud.start(window="none")
     time.sleep(0.5)
     body = json.dumps({"nope": 1}).encode()

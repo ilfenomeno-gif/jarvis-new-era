@@ -157,6 +157,10 @@ def test_open_website_tool_is_declared_with_required_url():
     )
     declarations = ast.literal_eval(declarations_assignment.value)
     browser_tool = next(item for item in declarations if item["name"] == "open_website")
+    youtube_tool = next(item for item in declarations if item["name"] == "youtube_video")
 
     assert browser_tool["parameters"]["required"] == ["url"]
     assert "integrated browser" in browser_tool["description"]
+    assert "only asks to open YouTube" in browser_tool["description"]
+    assert "only asks to open YouTube" in youtube_tool["description"]
+    assert "use open_website" in youtube_tool["description"]

@@ -49,8 +49,12 @@ import sys
 import time
 from typing import Any, AsyncIterator, Optional
 
+from opentelemetry import trace
+from opentelemetry.trace import Tracer
+
 from . import schema
-from .base import DEFAULT_CAPS, FunctionCall, Msg
+from .base import DEFAULT_CAPS, Field, FunctionCall, Msg
+from .retry import retry_call, retry_stream, validate_retries, validate_timeout
 
 # How much conversation to carry. Gemini Live compresses its own context with a
 # sliding window server-side; a stateless chat API has no such thing, so the
@@ -107,12 +111,17 @@ class PipelineEngine:
     """STT -> LLM -> TTS, wearing the Live session's interface."""
 
     def __init__(self, llm, stt=None, tts=None, *, config=None,
-                 log=None, history_chars: int = _DEFAULT_HISTORY_CHARS):
+                 log=None, history_chars: int = _DEFAULT_HISTORY_CHARS,
+                 retries: int = 1, timeout: float = 60.0,
+                 tracer: Tracer | None = None):
         self._llm = llm
         self._stt = stt
         self._tts = tts
         self._log = log or (lambda m: None)
         self._history_chars = history_chars
+        self._max_retries = validate_retries(retries)
+        self._provider_timeout = validate_timeout(timeout)
+        self._tracer = tracer or trace.get_tracer("jarvis.voice")
 
         self.caps = dict(DEFAULT_CAPS)
         llm_caps = getattr(llm, "caps", {}) or {}
@@ -440,6 +449,45 @@ class PipelineEngine:
         self._gen = asyncio.create_task(self._generate())
 
     async def _generate(self) -> None:
+        with self._tracer.start_as_current_span("voice.turn") as span:
+            span.set_attribute("voice.engine", "pipeline")
+            span.set_attribute("provider.retries", self._max_retries)
+            span.set_attribute("provider.timeout_s", self._provider_timeout)
+            try:
+                await self._generate_turn()
+            except Exception as error:
+                from core.telemetry import record_span_error
+                record_span_error(span, error)
+                raise
+
+    async def _llm_events(self) -> AsyncIterator[dict]:
+        from core.telemetry import record_span_error
+
+        iterator = retry_stream(
+            lambda: self._llm.chat(self._messages(), self._tools),
+            self._max_retries,
+            timeout=self._provider_timeout,
+        ).__aiter__()
+        try:
+            while True:
+                with self._tracer.start_as_current_span("voice.llm") as span:
+                    span.set_attribute("provider.class", type(self._llm).__name__)
+                    span.set_attribute("provider.retries", self._max_retries)
+                    span.set_attribute("provider.timeout_s", self._provider_timeout)
+                    try:
+                        event = await iterator.__anext__()
+                    except StopAsyncIteration:
+                        return
+                    except Exception as error:
+                        record_span_error(span, error)
+                        raise
+                yield event
+        finally:
+            close = getattr(iterator, "aclose", None)
+            if close is not None:
+                await close()
+
+    async def _generate_turn(self) -> None:
         said: list[str] = []
         calls: list[FunctionCall] = []
         t0 = time.monotonic()
@@ -447,7 +495,7 @@ class PipelineEngine:
         thinking = _ReasoningFilter()
         pending = ""            # visible text not yet a whole sentence
         try:
-            async for ev in self._llm.chat(self._messages(), self._tools):
+            async for ev in self._llm_events():
                 if ev.get("text"):
                     visible = thinking.feed(ev["text"])
                     if visible and first_word is None:
@@ -609,12 +657,26 @@ class PipelineEngine:
         if language and _accepts_language(self._tts):
             kwargs["language"] = language
         try:
-            async for pcm in self._tts.speak(text, **kwargs):
-                if pcm:
-                    if first is None:
-                        first = time.monotonic() - t0
-                    total += len(pcm)
-                    await self._emit(Msg.audio(pcm))
+            from core.telemetry import record_span_error
+            with self._tracer.start_as_current_span("voice.tts") as span:
+                span.set_attribute("provider.class", type(self._tts).__name__)
+                span.set_attribute("voice.text.characters", len(text))
+                span.set_attribute("provider.retries", self._max_retries)
+                span.set_attribute("provider.timeout_s", self._provider_timeout)
+                try:
+                    async for pcm in retry_stream(
+                        lambda: self._tts.speak(text, **kwargs),
+                        self._max_retries,
+                        timeout=self._provider_timeout,
+                    ):
+                        if pcm:
+                            if first is None:
+                                first = time.monotonic() - t0
+                            total += len(pcm)
+                            await self._emit(Msg.audio(pcm))
+                except Exception as error:
+                    record_span_error(span, error)
+                    raise
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -767,7 +829,22 @@ class PipelineEngine:
         self._timing = {"heard_s": _a.duration_s(pcm, sample_rate)}
         t0 = time.monotonic()
         try:
-            text = (await self._stt.transcribe(pcm, sample_rate)).strip()
+            from core.telemetry import record_span_error
+            with self._tracer.start_as_current_span("voice.stt") as span:
+                span.set_attribute("provider.class", type(self._stt).__name__)
+                span.set_attribute("voice.audio.bytes", len(pcm))
+                span.set_attribute("provider.retries", self._max_retries)
+                span.set_attribute("provider.timeout_s", self._provider_timeout)
+                try:
+                    text = (await retry_call(
+                        lambda: self._stt.transcribe(pcm, sample_rate),
+                        self._max_retries,
+                        timeout=self._provider_timeout,
+                    )).strip()
+                except Exception as error:
+                    record_span_error(span, error)
+                    raise
+                span.set_attribute("voice.transcript.characters", len(text))
         except Exception as e:
             self._report("speech recognition", self._stt, e)
             return ""
@@ -1161,7 +1238,9 @@ def _make(cfg: dict) -> PipelineEngine:
     if llm is None:
         raise RuntimeError("the pipeline engine needs a language model")
     return PipelineEngine(llm, part("stt"), part("tts"),
-                          config=cfg.get("live_config"), log=cfg.get("log"))
+                          config=cfg.get("live_config"), log=cfg.get("log"),
+                          retries=cfg.get("retries", 1),
+                          timeout=cfg.get("timeout", 60.0))
 
 
 PROVIDER = {
@@ -1170,7 +1249,13 @@ PROVIDER = {
     "label": "Local pipeline",
     "hint": "Speech recognition, a language model and speech synthesis, assembled",
     "requires": (),
-    "needs": (),        # its parts are chosen in the panel, not typed in
+    "needs": (
+        Field("retries", "Transient retries", kind="number", default=1,
+              required=False, hint="0–3; streamed output is never replayed",
+              advanced=True),
+        Field("timeout", "Provider timeout (seconds)", kind="number", default=60,
+              required=False, advanced=True),
+    ),
     "caps": {},         # taken from whatever fills its slots
     "factory": _make,
 }

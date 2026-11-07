@@ -47,7 +47,7 @@ def test_hud_html_has_top_view_humanoid_scale():
     assert 'function openSystem(id,tr){if(!tr&&touring)' in html and \
            'setVisualMode("map");if((id||"main")===view)' in html
     assert 'Iris rivelata a schermo intero.' in html
-    assert 'premi ENTER per avviare' in html
+    assert 'post(API.iris,{visible:on})' in html
     # top view
     assert 'id="topview"' in html
     assert "setTopView" in html

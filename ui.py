@@ -147,6 +147,10 @@ class _SafeBrowserPage(QWebEnginePage):
 
 
 class _HudBrowserPage(QWebEnginePage):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        _configure_iris_page(self)
+
     @staticmethod
     def navigation_allowed(url, is_main_frame: bool) -> bool:
         if is_main_frame:
@@ -164,6 +168,37 @@ class _HudBrowserPage(QWebEnginePage):
         if not self.navigation_allowed(url, is_main_frame):
             return False
         return super().acceptNavigationRequest(url, navigation_type, is_main_frame)
+
+
+_IRIS_AUTO_ENTRY_SCRIPT = """
+(() => {
+  if (location.origin !== "https://mira-humanoid.vercel.app") return;
+  let attempts = 0;
+  const timer = setInterval(() => {
+    const enter = [...document.querySelectorAll("button")]
+      .find(button => button.textContent.trim() === "ENTER");
+    if (enter) {
+      clearInterval(timer);
+      enter.click();
+    } else if (++attempts >= 120) {
+      clearInterval(timer);
+    }
+  }, 250);
+})();
+"""
+
+
+def _configure_iris_page(page) -> None:
+    page.settings().setAttribute(
+        QWebEngineSettings.WebAttribute.PlaybackRequiresUserGesture, False
+    )
+    script = QWebEngineScript()
+    script.setName("jarvis-iris-direct-entry")
+    script.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentCreation)
+    script.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
+    script.setRunsOnSubFrames(True)
+    script.setSourceCode(_IRIS_AUTO_ENTRY_SCRIPT)
+    page.scripts().insert(script)
 
 
 def _base_dir() -> Path:

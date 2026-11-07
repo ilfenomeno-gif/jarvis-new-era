@@ -83,6 +83,8 @@ def save_assistant_config(assistant_name: str, user_name: str) -> None:
 # language, so this list is safe to show verbatim in any locale.
 AVAILABLE_VOICES = ["Charon", "Puck", "Kore", "Fenrir", "Aoede"]
 DEFAULT_VOICE    = "Charon"
+_MASCULINE_VOICES = {"Charon", "Puck", "Fenrir"}
+IRIS_VOICE = "Kore"
 
 
 def get_voice() -> str:
@@ -90,6 +92,17 @@ def get_voice() -> str:
     or if the stored value is not a voice we recognise."""
     v = load_api_keys().get("voice_name", DEFAULT_VOICE) or DEFAULT_VOICE
     return v if v in AVAILABLE_VOICES else DEFAULT_VOICE
+
+
+def get_jarvis_voice() -> str:
+    """Return the configured masculine voice, falling back to Charon."""
+    voice = get_voice()
+    return voice if voice in _MASCULINE_VOICES else DEFAULT_VOICE
+
+
+def get_iris_voice() -> str:
+    """Return Iris's feminine Live voice without changing the saved preference."""
+    return IRIS_VOICE
 
 
 def get_page_reader_engine() -> str:

@@ -440,7 +440,7 @@ const SW=/^(che|come|per|con|del|dei|della|delle|qual|quale|quali|sono|nel|nei|u
 function say(w,h){const d=document.createElement("div");d.className="m "+w;d.innerHTML=h;$("msgs").appendChild(d);$("msgs").scrollTop=1e9;return d}
 window.jarvisHudMessage=(title,text)=>say("j","<small>"+esc(String(title))+"</small><br>"+esc(String(text)));
 // ── Bridge al runtime Jarvis (SSE + POST), iniettato da JARVIS VII ──────────
-const API={chat:"/api/chat",plugin:"/api/plugin",events:"/events"};
+const API={chat:"/api/chat",plugin:"/api/plugin",iris:"/api/iris",events:"/events"};
 let bridgeConnected=false,assistantState="starting",streamingChatNode=null;
 async function post(path,payload){const r=await fetch(path,{method:"POST",headers:{"Content-Type":"application/json","X-HUD":"1"},body:JSON.stringify(payload)});if(!r.ok)throw new Error("Bridge HTTP "+r.status)}
 function showBridgeState(){const c=assistantState.toUpperCase().replaceAll("_"," ");$("log").innerHTML=bridgeConnected?`Bridge collegato · <b>${c}</b>`:"Bridge Jarvis: disconnesso — chat in modalità demo locale."}
@@ -472,7 +472,7 @@ $("topview").onclick=()=>setTopView();
 const HUMANOID_URL="https://mira-humanoid.vercel.app/";
 let humanoidLoaded=false;
 function activateChat(){document.querySelectorAll("#tabs button").forEach(b=>b.classList.toggle("on",b.dataset.t==="chat"));$("chat").hidden=false;$("dati").hidden=true;$("sistema").hidden=true}
-function revealHumanoid(on){const wrap=$("humanoidWrap");on=on===undefined?wrap.hidden:on;wrap.hidden=!on;document.body.classList.toggle("iris-mode",on);$("humanoid").classList.toggle("on",on);if(on){activateChat();if(renderFrame){cancelAnimationFrame(renderFrame);renderFrame=0}if(!humanoidLoaded){$("humanoidFrame").src=HUMANOID_URL;humanoidLoaded=true}}else if(!renderFrame){last=performance.now();lastRender=0;renderFrame=requestAnimationFrame(frame)}if(on)say("system","Iris rivelata a schermo intero. Se richiesto dal sito, premi ENTER per avviare l'audio.")}
+function revealHumanoid(on){const wrap=$("humanoidWrap"),wasVisible=!wrap.hidden;on=on===undefined?!wasVisible:on;if(on===wasVisible)return;wrap.hidden=!on;document.body.classList.toggle("iris-mode",on);$("humanoid").classList.toggle("on",on);if(on){activateChat();if(renderFrame){cancelAnimationFrame(renderFrame);renderFrame=0}if(!humanoidLoaded){$("humanoidFrame").src=HUMANOID_URL;humanoidLoaded=true}}else if(!renderFrame){last=performance.now();lastRender=0;renderFrame=requestAnimationFrame(frame)}if(bridgeConnected)post(API.iris,{visible:on}).catch(e=>say("system","Cambio voce Iris/JARVIS non riuscito: "+e.message));if(on)say("system","Iris rivelata a schermo intero.")}
 $("humanoid").onclick=()=>revealHumanoid();
 $("mapview").onclick=()=>setVisualMode("map");
 $("humanoidClose").onclick=()=>revealHumanoid(false);
