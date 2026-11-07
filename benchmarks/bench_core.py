@@ -19,6 +19,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from benchmarks.schema import CURRENT_SCHEMA_VERSION  # noqa: E402
+
+
 def _distribution(samples_ms: list[float]) -> dict[str, float]:
     ordered = sorted(samples_ms)
 
@@ -275,15 +278,51 @@ def main() -> int:
     parser.add_argument("--sqlite-mode", choices=("legacy", "pooled"), default="legacy")
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    report = json.dumps(
-        run_benchmarks(
-            args.iterations,
-            args.runs,
-            sqlite_pooled=args.sqlite_mode == "pooled",
-        ),
-        ensure_ascii=False,
-        indent=2,
+    details = run_benchmarks(
+        args.iterations,
+        args.runs,
+        sqlite_pooled=args.sqlite_mode == "pooled",
     )
+    metrics = {}
+    for name, result in details["microbenchmarks"].items():
+        samples = [run["p50_ms"] for run in result["runs"]]
+        metrics[name] = {
+            "unit": "ms",
+            "samples": samples,
+            "median": statistics.median(samples),
+        }
+    for mode in ("buffered", "token_stream"):
+        samples = [
+            run["p50_ms"]
+            for run in details["synthetic_ttft"][mode]["runs"]
+        ]
+        metrics[f"synthetic_ttft.{mode}"] = {
+            "unit": "ms",
+            "samples": samples,
+            "median": statistics.median(samples),
+        }
+
+    stable_report = {
+        "schema_version": CURRENT_SCHEMA_VERSION,
+        "created_at_utc": details["created_at_utc"],
+        "benchmark": {
+            "name": "jarvis.core",
+            "kind": "offline",
+            "unit": "ms",
+            "comparison_key": (
+                f"sqlite={args.sqlite_mode};iterations={args.iterations}"
+            ),
+            "parameters": {
+                "iterations": args.iterations,
+                "runs": args.runs,
+                "sqlite_mode": args.sqlite_mode,
+            },
+            "environment": details["environment"],
+        },
+        "metrics": metrics,
+        "details": details,
+    }
+    report = json.dumps(stable_report, ensure_ascii=False, indent=2)
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(report + "\n", encoding="utf-8")

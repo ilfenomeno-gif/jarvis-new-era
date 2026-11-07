@@ -1,4 +1,8 @@
-"""Measure live Ollama first-content latency through JARVIS's BrainRouter."""
+"""Live benchmark for first-content latency (streaming) and full completion (buffered).
+
+Despite the filename, buffered.* metrics measure completion time, not TTFT.
+See metric_semantics in the emitted report for authoritative definitions.
+"""
 from __future__ import annotations
 
 import argparse
@@ -19,6 +23,8 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+from benchmarks.schema import CURRENT_SCHEMA_VERSION  # noqa: E402
 
 PROMPTS = (
     (
@@ -67,6 +73,21 @@ LOCAL_TOOL_POLICY = (
     "loop instead requires session approval bound to the exact goal and action limit; its "
     "screen images are sent to Gemini cloud."
 )
+
+TTFT_METRIC_SEMANTICS = {
+    "stream.*": (
+        "Elapsed time to the first non-empty content event emitted by BrainRouter; "
+        "does not measure HUD or browser rendering."
+    ),
+    "buffered.*": (
+        "Elapsed time until BrainRouter completes the full response; completion "
+        "latency, not time to first token."
+    ),
+    "details.modes.*.all_prompt_samples": (
+        "Aggregate distribution across prompts; its latency meaning follows the "
+        "corresponding mode (first content for stream, full completion for buffered)."
+    ),
+}
 
 
 def _distribution(samples_ms: list[float]) -> dict[str, float]:
@@ -371,8 +392,8 @@ def main() -> int:
         print(f"Live TTFT benchmark not completed: {exc}", file=sys.stderr)
         return 2
 
-    report = {
-        "schema_version": 1,
+    details = {
+        "schema_version": CURRENT_SCHEMA_VERSION,
         "created_at_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "benchmark": {
             "path": "core.brain_router.BrainRouter.stream_chat",
@@ -389,8 +410,36 @@ def main() -> int:
             "Each prompt starts a fresh conversation with the current JARVIS system prompt.",
             "No tool declarations or prior chat history are included.",
             "Warm-up is excluded; results describe steady-state rather than cold model load.",
-            "Per-prompt p95 and p99 use only the configured repeat count; interpret as noisy when fewer than 20 samples.",
+            "Per-prompt p95 and p99 use only the configured repeat count; treat tail percentiles as indicative, not stable, below 50 samples.",
         ],
+    }
+    metrics = {}
+    for mode, mode_report in modes.items():
+        for prompt_id, result in mode_report["prompts"].items():
+            samples = result["samples_ms"]
+            metrics[f"{mode}.{prompt_id}"] = {
+                "unit": "ms",
+                "samples": samples,
+                "median": statistics.median(samples),
+            }
+    report = {
+        "schema_version": CURRENT_SCHEMA_VERSION,
+        "created_at_utc": details["created_at_utc"],
+        "benchmark": {
+            "name": "jarvis.ttft",
+            "kind": "live",
+            "unit": "ms",
+            "comparison_key": metadata["model"],
+            "parameters": {
+                "model": metadata["model"],
+                "repeats_per_prompt": args.repeats,
+                "warmup_per_mode": 1,
+            },
+            "environment": metadata["hardware"],
+        },
+        "metrics": metrics,
+        "metric_semantics": TTFT_METRIC_SEMANTICS,
+        "details": details,
     }
     rendered = json.dumps(report, ensure_ascii=False, indent=2)
     if args.output:
