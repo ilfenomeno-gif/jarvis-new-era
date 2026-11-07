@@ -1,0 +1,60 @@
+version: 1
+runtime:
+  max_steps: 20
+  step_timeout_seconds: 120
+  retry:
+    max: 2
+    backoff: exponential
+context:
+  max_context_tokens: 32000
+  compaction_ratio: 0.75
+  compactor_role: json
+policy:
+  risk_levels: [read, write, destructive]
+  default:
+    read: auto
+    write: confirm
+    destructive: confirm_and_denylist
+  capability_contract:
+    version: 1
+    missing_or_invalid: deny
+  confirmation_delegated_tools:
+    agent_loop: true
+    computer_input: true
+    terminal_exec: true
+    computer_click: true
+    computer_type: true
+    computer_key: true
+    computer_move: true
+    computer_stop: true
+  foreground_allowlist: true
+  emergency_stop: true
+budget:
+  max_tokens_run: 0
+  max_cost_run: 0
+eval:
+  suite: tests/eval/harness_suite.yaml
+  judge:
+    mode: rule
+    default_rule: equals
+    rules:
+      equals:
+        type: equals
+      contains:
+        type: contains
+      substring:
+        type: substring
+      regex:
+        type: regex
+      length:
+        type: length
+      json:
+        type: json
+      exit_code:
+        type: exit_code
+      truthy:
+        type: truthy
+  judge_role: json
+recovery:
+  checkpoint_every_steps: 3
+  journal_path: config/harness_runs.jsonl

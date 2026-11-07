@@ -8,13 +8,28 @@ from typing import Any
 from core.agent_loop import AgentLoop, resolve_max_steps
 
 
-def agent_loop(parameters: dict[str, Any] | None = None, **_context: Any) -> str:
+def agent_loop(
+    parameters: dict[str, Any] | None = None,
+    *,
+    harness_runtime: Any = None,
+    **_context: Any,
+) -> str:
     values = parameters or {}
     goal = values.get("goal")
     if not isinstance(goal, str) or not goal.strip():
         raise ValueError("goal must be a non-empty string.")
     maximum = resolve_max_steps(values.get("max_steps"))
     session_approved = values.get("_session_approved") is True
+    if harness_runtime is not None:
+        from core.harness.session import HarnessSession
+
+        result = harness_runtime.run(HarnessSession(
+            agent="agent_loop",
+            goal=goal.strip(),
+            artifacts=[{"max_steps": maximum}],
+            status="approved" if session_approved else "created",
+        ))
+        return json.dumps(result.to_dict(), ensure_ascii=False)
     loop = AgentLoop(
         max_steps=maximum,
         confirm_session=lambda _prompt: session_approved,

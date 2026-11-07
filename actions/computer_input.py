@@ -4,19 +4,24 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from core.computer_use import execute_input
+from core.computer_action_support import request_confirmed_input
 
 
 def computer_input(parameters: dict[str, Any] | None = None, **_context: Any) -> str:
-    return json.dumps(execute_input(parameters or {}), ensure_ascii=False)
+    return json.dumps(
+        request_confirmed_input("computer_input", parameters or {}),
+        ensure_ascii=False,
+    )
 
 
 TOOL = {
     "name": "computer_input",
     "description": (
         "Perform exactly one mouse or keyboard action in the focused, allowlisted "
-        "Windows app. Every action requires explicit user confirmation in a separate "
-        "turn. Ctrl+Alt+Esc is the emergency stop. Never chain actions."
+        "Windows app or terminal. To run a terminal command, first open a visible "
+        "terminal, type the proposed command, then request a separate Enter action "
+        "after the user reviews and confirms it. The focused window is checked again "
+        "after confirmation; Ctrl+Alt+Esc is the emergency stop. Never chain actions."
     ),
     "parameters": {
         "type": "OBJECT",

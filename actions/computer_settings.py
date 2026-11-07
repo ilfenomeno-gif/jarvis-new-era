@@ -669,6 +669,10 @@ ACTION_MAP: dict[str, callable] = {
 # Asking before every action is what makes an assistant unusable, and every
 # question costs a round trip. Undo is both faster and safer than a prompt.
 _IRREVERSIBLE = {
+    "close_app":   ("Close the active application",
+                    "Unsaved changes in the active application may be lost."),
+    "close_window": ("Close the active window",
+                     "Unsaved changes or the current page may be lost."),
     "restart":     ("Restart this computer",
                     "Anything unsaved will be lost. The computer restarts in 10 seconds."),
     "shutdown":    ("Shut this computer down",

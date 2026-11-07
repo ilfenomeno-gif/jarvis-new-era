@@ -1,0 +1,17 @@
+version: 1
+cases:
+  - id: exact-match
+    input: safe
+    expected: safe
+    metadata:
+      rule: equals
+  - id: contains-match
+    input: "Harness evaluation is local"
+    expected: local
+    metadata:
+      rule: contains
+  - id: truthy-result
+    input: true
+    expected: true
+    metadata:
+      rule: truthy

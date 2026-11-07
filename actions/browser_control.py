@@ -3,14 +3,16 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import json
 import os
 import platform
 import shutil
 import subprocess
 import threading
 import webbrowser
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from playwright.async_api import (
     async_playwright,
@@ -458,6 +460,79 @@ class _BrowserSession:
         self._pw:      Playwright     | None = None
         self._context: BrowserContext | None = None
         self._page:    Page           | None = None
+        self._watched_pages: set[int] = set()
+        self._diagnostics: dict[str, list[dict[str, Any] | str]] = {
+            "network_responses": [],
+            "dom_errors": [],
+            "console_errors": [],
+        }
+
+    def _record_diagnostic(self, category: str, value: dict[str, Any] | str) -> None:
+        records = self._diagnostics[category]
+        records.append(value)
+        del records[:-50]
+
+    def _watch_page(self, page: Page) -> None:
+        page_id = id(page)
+        if page_id in self._watched_pages:
+            return
+        self._watched_pages.add(page_id)
+        page.on(
+            "response",
+            lambda response: self._record_diagnostic(
+                "network_responses",
+                {
+                    "timestamp": datetime.now(UTC).isoformat(timespec="milliseconds"),
+                    "method": response.request.method,
+                    "url": response.url.split("?", 1)[0][:2048],
+                    "status": response.status,
+                },
+            ),
+        )
+        page.on(
+            "requestfailed",
+            lambda request: self._record_diagnostic(
+                "network_responses",
+                {
+                    "timestamp": datetime.now(UTC).isoformat(timespec="milliseconds"),
+                    "method": request.method,
+                    "url": request.url.split("?", 1)[0][:2048],
+                    "failure": (request.failure or "request failed")[:1000],
+                },
+            ),
+        )
+        page.on(
+            "console",
+            lambda message: self._record_diagnostic(
+                "console_errors",
+                f"{datetime.now(UTC).isoformat(timespec='milliseconds')} "
+                f"{message.type}: {message.text[:2000]}",
+            )
+            if message.type == "error"
+            else None,
+        )
+        page.on(
+            "pageerror",
+            lambda error: self._record_diagnostic(
+                "dom_errors",
+                f"{datetime.now(UTC).isoformat(timespec='milliseconds')} {str(error)[:2000]}"
+            ),
+        )
+
+    async def diagnostics(self, *, clear: bool = False) -> dict[str, list[Any]]:
+        page = await self._get_page()
+        self._watch_page(page)
+        snapshot = {key: list(values) for key, values in self._diagnostics.items()}
+        if clear:
+            for values in self._diagnostics.values():
+                values.clear()
+        return snapshot
+
+    async def wait(self, seconds: float = 1.0) -> str:
+        if not 0 <= seconds <= 10:
+            raise ValueError("Browser wait must be between 0 and 10 seconds.")
+        await asyncio.sleep(seconds)
+        return f"Waited {seconds:g}s."
 
     def start(self):
         if self._thread and self._thread.is_alive():
@@ -630,6 +705,7 @@ class _BrowserSession:
         if self._page is None or self._page.is_closed():
             self._page = await self._context.new_page()
             await asyncio.sleep(0.2)
+        self._watch_page(self._page)
         return self._page
 
     async def go_to(self, url: str) -> str:
@@ -1040,6 +1116,13 @@ def browser_control(
             result = sess.run(sess.get_text())
         elif action == "get_url":
             result = sess.run(sess.get_url())
+        elif action == "get_diagnostics":
+            result = json.dumps(sess.run(sess.diagnostics()), ensure_ascii=False)
+        elif action == "clear_diagnostics":
+            sess.run(sess.diagnostics(clear=True))
+            result = "Browser diagnostics cleared."
+        elif action == "wait":
+            result = sess.run(sess.wait(float(params.get("seconds", 1.0))))
         elif action == "press":
             result = sess.run(sess.press(params.get("key", "Enter")))
         elif action == "close_tab":

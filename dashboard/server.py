@@ -12,6 +12,7 @@ Install deps:  pip install fastapi "uvicorn[standard]" cryptography
 import asyncio
 import base64
 import hashlib
+import os
 import re
 import secrets
 import socket
@@ -684,6 +685,7 @@ class DashboardServer:
         self._device_sessions: dict[str, dict] = {}  # device_token → {session_key}
         self._phone_audio_queue: asyncio.Queue    = asyncio.Queue(maxsize=200)
         self._uploads_dir                 = UPLOADS_DIR
+        self._capability_registry         = None
         # Set by serve() when the port could not be taken, so the UI can say
         # why the QR code leads nowhere instead of showing it regardless.
         self._bind_error: str = ""
@@ -777,6 +779,9 @@ class DashboardServer:
     def set_connect_callback(self, fn) -> None:
         self._connect_callback = fn
 
+    def set_capability_registry(self, registry) -> None:
+        self._capability_registry = registry
+
     # ── broadcast ────────────────────────────────────────────────────────
 
     async def broadcast(self, msg: dict) -> None:
@@ -813,6 +818,29 @@ class DashboardServer:
         def _auth(req: Request) -> bool:
             return _valid(req.headers.get("authorization", "")
                           .removeprefix("Bearer ").strip())
+
+        if (
+            os.environ.get("JARVIS_HARNESS") == "1"
+            and os.environ.get("JARVIS_HARNESS_API") == "1"
+        ):
+            @app.get("/capabilities")
+            async def capabilities_ep(req: Request):
+                if not _auth(req):
+                    return JSONResponse({"error": "Unauthorized"}, status_code=401)
+                if self._capability_registry is None:
+                    return JSONResponse(
+                        {"error": "Capability registry unavailable."},
+                        status_code=503,
+                    )
+                try:
+                    from core.harness.api_contract import list_capabilities
+
+                    return JSONResponse(list_capabilities(self._capability_registry))
+                except (TypeError, ValueError):
+                    return JSONResponse(
+                        {"error": "Capability registry contains an invalid contract."},
+                        status_code=503,
+                    )
 
         def _who(req: Request) -> str:
             """The client address a throttle counts against."""

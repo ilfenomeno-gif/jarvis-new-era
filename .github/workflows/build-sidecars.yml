@@ -1,0 +1,47 @@
+name: Build and smoke-test sidecars
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/build-sidecars.yml"
+      - "sidecars/**"
+      - "core/sidecar_runtime.py"
+      - "tests/test_sidecar_smoke.py"
+      - "pytest.ini"
+  push:
+    paths:
+      - ".github/workflows/build-sidecars.yml"
+      - "sidecars/**"
+      - "core/sidecar_runtime.py"
+      - "tests/test_sidecar_smoke.py"
+      - "pytest.ini"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-health-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install pytest
+        run: python -m pip install pytest
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - name: Build Rust health-only sidecar
+        working-directory: sidecars/rust
+        run: cargo build --release
+      - name: Build .NET health-only sidecar
+        working-directory: sidecars/dotnet
+        run: dotnet build -c Release
+      - name: Smoke-test real sidecar binaries
+        env:
+          JARVIS_POLYGLOT_RUST_BIN: ${{ github.workspace }}/sidecars/rust/target/release/jarvis-sidecar-rust
+          JARVIS_POLYGLOT_DOTNET_BIN: ${{ github.workspace }}/sidecars/dotnet/bin/Release/net8.0/Jarvis.Sidecar
+        run: python -m pytest -q -rs -m requires_sidecar_binary tests/test_sidecar_smoke.py

@@ -46,6 +46,245 @@ inclusi in questa esecuzione: le esecuzioni complete precedenti hanno segnalato 
 fallimenti in quell'area e un crash nativo del processo Qt/WebEngine; la causa resta
 da diagnosticare.
 
+## Workflow interno Fables
+
+I workflow Jarvis sono persistiti in SQLite nell'area dati privata dell'utente
+(`%LOCALAPPDATA%\Jarvis VII\state\workflows.sqlite3` su Windows), non in file di
+appunti visibili nella cartella del progetto. `JARVIS_WORKFLOW_DB` consente di
+selezionare un archivio alternativo per test. Il coordinatore salva piano,
+checklist, eventi idempotenti e checkpoint; non attiva azioni del browser in fase
+di pianificazione o simulazione.
+
+Il flusso Fables registra 12 voci: profilo/altre modalità uniche, 5e Defaults,
+razze, classi, feats, mostri, oggetti, incantesimi, personaggi, fazioni, Aree e
+POI. Le modalità uniche restano solo in valutazione; 5e Defaults, Aree e POI sono
+bloccati come operazioni del workflow (non attivare i defaults, non creare Aree/POI);
+lo stato attuale del mondo non viene cambiato né verificato. Gli agenti esistenti sono assegnati per ruolo (coordinamento, fonti e
+diagnosi), ma la simulazione non chiama le loro API né Gemini.
+
+Per riprodurre il caso richiesto senza rete, browser, API o modifiche al mondo:
+
+```powershell
+.\.venv\Scripts\python.exe main.py --simulate-fables-workflow
+```
+
+Il comando restituisce esito `blocked` quando la transizione post-accettazione
+non è verificata; questo è l'esito atteso del caso sintetico, non una diagnosi
+del guasto reale di Friends & Fables.
+
+Il preflight live, separato dalla simulazione, richiede sia `--confirm-live` sia
+una frase digitata esattamente a runtime:
+
+```powershell
+python main.py --live-fables-workflow --world "https://play.fables.gg/worlds/01a18d96-5091-7c68-9144-2039b73fe2d3" --confirm-live
+```
+
+Questa versione del preflight naviga e legge il testo visibile, quindi registra
+URL, hash del testo e limiti di osservazione nel database privato. Non accetta
+richieste, non invoca agenti e non crea contenuti: gli strumenti browser attuali
+non forniscono evidenze network/console né un flusso Fables specifico verificato.
+Il comando si arresta `blocked` se lo stato della richiesta non è verificabile.
+`JARVIS_WORKFLOW_MAX_CYCLES` limita il loop di workflow (1–50, default 24);
+`JARVIS_LOCAL_TOOL_CYCLES` controlla i cicli del brain locale (1–50, default 12).
+
+### Fables World Designer e diagnosi live (Fase 3)
+
+`core/fables_world.py` modella i 19 ambiti del mondo con schede, note di
+coerenza e collegamenti tra record. Aree, punti di interesse e 5e Defaults sono
+sempre salvati come `excluded` con motivazione. `agents/world_designer_agent.py`
+valida il modello, può invocare planner/research/critic iniettati, salva un
+checkpoint SQLite e permette di riprendere la bozza tramite il suo ID.
+
+L'esecuzione dal sito non presume selettori Fables: richiede un mapping UI
+verificato in JSON con le etichette `create_label`, `name_label`, `card_label`
+e `submit_label` per ogni categoria da creare. Le diagnosi persistono URL,
+stato richiesta, risposte network, errori DOM/console e timestamp in SQLite;
+le risposte HTTP omettono query string e corpi per evitare di salvare token o
+contenuti sensibili. Lo stato resta `pending` quando la risposta non prova sia
+un HTTP 2xx sia la comparsa visibile dell'elemento.
+
+Per eseguire una bozza già salvata, servono i due flag live, un ID bozza,
+`config/fables_forms.json` con mapping controllati e una frase runtime esatta:
+
+```powershell
+python main.py --live-fables-workflow --world "https://play.fables.gg/worlds/..." --confirm-live --world-draft-id "<id>"
+```
+
+La conferma richiesta è `AUTORIZZO ESECUZIONE FABLES <URL>`. Il comando
+`--live-fables-workflow` senza `--world-draft-id` rimane il preflight
+osservativo. Nessuna interazione live è stata eseguita durante i test; i test
+dell'esecutore usano adapter mock. L'interfaccia attuale non fornisce un mapping
+di form Fables verificato: la scrittura resta bloccata finché l'utente non lo
+configura e conferma.
+
+Per diagnosticare una richiesta di partecipazione che dovrebbe aprire un mondo,
+il comando seguente apre la pagina indicata e attiva una sola volta l'etichetta
+UI verificata. Registra prima/dopo, stato HTTP, errori e diagnosi SQLite; non
+ripete una richiesta già checkpointata:
+
+```powershell
+python main.py --live-fables-workflow --confirm-live --diagnose-accepted-request --request-page "https://fables.gg/requests/<id>" --request-id "<id>" --accept-label "Accept request" --world "https://play.fables.gg/worlds/<world-id>"
+```
+
+La conferma runtime richiesta è
+`AUTORIZZO DIAGNOSI RICHIESTA FABLES <pagina> -> <mondo> [<id>]`.
+Questo comando esegue un click reale: non usarlo se l'azione è già stata
+accettata prima dell'avvio; il checkpoint evita solo esecuzioni successive
+dello stesso ID richiesta.
+
+### Game Player Subway Surfers (Fase 4)
+
+`core/game_vision.py` espone `GameVision.perceive()` e il modello `GameState`.
+Il provider desktop predefinito cattura uno screenshot e usa OCR se sono
+disponibili PyAutoGUI, Pillow e pytesseract; per CV/ML o test, inietta
+`frame_provider` e `frame_analyzer`. `core/game_input.py` offre swipe, salto e
+roll con ritardo casuale limitato e dispatcher iniettabile.
+
+`core/game_loop.py` applica percepisci/decidi/agisci/verifica e arresta la
+sessione su crash, target score, timeout, stop utente o limite di passi.
+Il riepilogo è salvato nella tabella SQLite `game_sessions`. `GamePlayerAgent`
+fornisce l'avvio in background e lo stop tramite evento. I test usano frame,
+input e clock mock; non simulano né autorizzano input desktop reale. L'OCR
+predefinito legge fatti HUD testuali: per riconoscere ostacoli da immagini va
+fornito un analyzer CV dedicato.
+
+### Chat Orchestrator (Fase 5)
+
+`core/chatbot_bridge.py` definisce `BaseChatbot` e `MockChatbot`; gli adapter
+esterni possono implementare lo stesso `send_message()` senza modificare il
+coordinatore. `core/chat_orchestrator.py` mantiene conversazioni multi-turno
+attribuendo ogni messaggio a `user`, `chatbot` (con nome) o `jarvis`, e salva
+sessione, checkpoint, eventi e punti chiave in `MemoryStore`/SQLite.
+`plan_content(topic, user_preferences)` inoltra ai chatbot configurati un
+contesto JSON che distingue le fonti e restituisce un piano strutturato con
+suggerimenti attribuiti, sintesi di Jarvis e scaletta. Senza adapter esterni,
+dichiara esplicitamente che il piano usa solo il contesto locale. In questa
+fase non vengono chiamate API esterne dai test o dal bridge mock.
+
+### Social Agent (Fase 6)
+
+`core/account_manager.py` salva i token solo nel `SecretStore` cifrato (DPAPI
+su Windows) e conserva in SQLite soltanto piattaforma e username; in alternativa
+può leggere `SOCIAL_INSTAGRAM_USERNAME` / `SOCIAL_INSTAGRAM_TOKEN` o le
+corrispondenti `SOCIAL_TIKTOK_*`. Se il backend sicuro non è disponibile, il
+salvataggio del token fallisce esplicitamente, senza fallback in chiaro.
+
+`core/social_publishers.py` definisce `BasePublisher`, un mock e adapter
+Instagram/TikTok che richiedono un client fornito dall'integrazione con le API
+ufficiali. Non sono implementati scraping, automazione browser o bot non
+autorizzati. `agents/social_agent.py` prepara bozze e pubblica solo dopo una
+conferma che restituisca esplicitamente `True`; l'autopilot è disattivato per
+default e va abilitato tramite configurazione esplicita del costruttore.
+Bozze e stato delle pubblicazioni sono registrati in SQLite. Ogni bozza può
+essere inviata una sola volta; errori e log non includono token o messaggi grezzi
+restituiti dai publisher.
+
+### Server headless e task queue (Fase 7)
+
+Avvio locale: `python -m server.app` (FastAPI/Uvicorn su `127.0.0.1:8765`).
+Il server non importa né avvia la GUI PyQt. Gli endpoint sono `GET /health`,
+`GET /status`, `POST /task` con `{"task":"..."}` e `GET /task/{task_id}`.
+Task e heartbeat sono persistiti nel database SQLite interno. Un task lasciato
+`running` da un arresto viene rimesso `pending` al riavvio (consegna at-least-once;
+gli handler che fanno effetti esterni devono essere idempotenti). Il worker
+predefinito consuma e conferma la ricezione, ma non esegue azioni dell'agente
+Jarvis; passare `task_handler` a `create_app()` per collegare un executor.
+
+Non esporre questa API direttamente a reti non fidate: l'avvio predefinito è
+solo loopback e non implementa autenticazione. Il servizio non configura
+l'avvio automatico del sistema operativo; per funzionare 24/7 va registrato
+come servizio/task scheduler dall'amministratore. L'heartbeat persiste timestamp
+e offre `alert_callback` iniettabile per una futura integrazione notifiche.
+
+### Phone Channel (Fase 8)
+
+`core/phone_channel.py` definisce `BasePhoneChannel`, un mock in memoria e un
+`TelegramAdapter` basato sul Bot API HTTPS. L'adapter Telegram resta disabilitato
+finché `enabled=True` non viene passato esplicitamente; il token va inserito nel
+`SecretStore` sotto la chiave `phone:telegram:bot_token`. Chat ID e token non
+sono inclusi in repr, log o messaggi di errore. `core/message_router.py` instrada
+messaggi normali a Jarvis, `/status` e `/stop` ai rispettivi handler, e
+`AUTORIZZO OVERRIDE` all'hook di sicurezza: l'override non viene autorizzato
+automaticamente. L'inbound è fail-closed: senza `allowed_sender_ids` nessun
+mittente viene elaborato. L'invio richiede un canale configurato; i test usano
+solo mock e trasporti finti. Non vengono inviati messaggi reali.
+
+### Terminal Agent (Fase 9)
+
+`core/terminal_guard.py` carica `config/terminal_policy.yaml` e consente solo
+gli eseguibili esplicitamente elencati; comandi non riconosciuti richiedono un
+override, mentre input malformati e operatori di shell vengono rifiutati senza
+possibilità di override. `core/terminal_agent.py` avvia i processi con
+`shell=False`, timeout e output acquisito. L'override richiede il token esplicito
+`AUTORIZZO OVERRIDE`, vale per la singola esecuzione e registra esito, motivo,
+comando e ID mittente (se disponibile) in SQLite. Il router telefonico inoltra
+solo i messaggi di mittenti autorizzati al gestore override configurato.
+La policy e il timeout sono protezioni aggiuntive, non sostituiscono il normale
+controllo dell'utente sui comandi eseguiti.
+
+### Computer Agent (Fase 10)
+
+`core/computer_vision.py` cattura lo schermo solo quando viene chiamato e usa
+OCR locale iniettabile per trovare testo e coordinate. `core/computer_input.py`
+invia azioni desktop con pause casuali; i test usano dispatcher e clock mock.
+`core/browser_automation.py` avvia Playwright soltanto su richiesta, in un
+contesto Chromium isolato e headless per default, senza profili o cookie utente;
+`MockBrowser` non avvia né apre nulla. L'agente accetta task web di ricerca
+Google e task locali espliciti (`local: click <testo>` oppure
+`local: type <testo> = <contenuto>`). La ricerca inserisce la query ma non
+estrae risultati. Rispettare i termini del sito: usare API ufficiali ove richiesto;
+non eseguire scraping né aggirare controlli di accesso, CAPTCHA o sistemi
+anti-automazione. I ritardi casuali sono solo pacing, non un meccanismo di
+elusione. I test della fase non catturano lo schermo né inviano input reali e
+non aprono browser.
+
+### Core intellettuale persistente (Fase 1)
+
+`core/intellectual_core.py` espone pianificazione, ricerca, generazione di
+bozze, critica e revisione. `core/memory_store.py` salva memoria per scope
+(`session`, `project`, `long_term`), record e checkpoint nello stesso SQLite
+privato. `core/critic_loop.py` registra due cicli di revisione (v1→v2→v3).
+Per impostazione predefinita la ricerca esterna non è configurata: il risultato
+dichiara l’assenza di fonti invece di inventarle. Un provider può essere passato
+esplicitamente al costruttore per test o integrazione futura.
+
+Le bozze espongono `render()` con obiettivo, indice, contenuto, citazioni datate
+e tipizzate, bibliografia, limiti, incertezze e cronologia delle revisioni.
+L’attendibilità delle fonti è una stima fornita dal provider tra 0 e 1, non una
+misura indipendentemente verificata da Jarvis.
+Il punteggio della critica è una metrica checklist: `1 - issue_count / 7`,
+limitata all’intervallo 0–1; non rappresenta una misura scientifica di qualità.
+
+### Copilot handoff (Fase 2)
+
+`core/copilot_bridge.py` prepara un pacchetto con il prompt originale, gli hash e
+le dimensioni dei file e lo registra nel database SQLite privato solo dopo una
+conferma. Il prompt non viene mai scritto o modificato. Se
+`prompts/copilot_prompt.md` è vuoto, il bridge restituisce l'errore esplicito
+`CopilotPromptEmpty`; se manca, restituisce `CopilotPromptNotFound`. In entrambi
+i casi non crea un pacchetto né un record.
+I pacchetti sono salvati nella tabella dedicata `copilot_handoffs`, separata
+dagli eventi dei workflow così da applicare direttamente l'unicità della chiave
+task/hash-prompt/hash-allegati e riprendere il pacchetto dopo un riavvio.
+
+Il prompt cercato per primo è `prompts/copilot_prompt.md`; in alternativa si
+possono configurare `prompt_path` in `config/copilot.yaml` o
+`JARVIS_COPILOT_PROMPT`. Il file attualmente presente nel checkout è vuoto:
+l'utente deve inserirvi il proprio prompt originale. Una volta compilato, non
+sono necessarie modifiche al codice.
+
+CLI, con percorsi dei file relativi alla radice del repository:
+
+```powershell
+python main.py --copilot-handoff --task "Descrizione del task" --files src\file.py tests\test_file.py
+```
+
+In chat/HUD usare la forma:
+`passa a Copilot task: Descrizione del task | files: src/file.py, tests/test_file.py`.
+Entrambi i flussi mostrano un riepilogo e richiedono conferma. Questa fase
+registra soltanto il pacchetto: non invia nulla a Copilot. La registrazione è
+idempotente per task, hash del prompt e insieme degli hash degli allegati.
+
 ## Documenti
 
 - `docs/n8n/README.md` — configurazione del bridge n8n e workflow "echo" di prova.

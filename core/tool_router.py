@@ -57,19 +57,24 @@ GROUPS: tuple[Group, ...] = (
     _group("connectors", r"github|gmail|connett|connector|drive|\bissue|pull request|\bpr\b|\bn8n\b|workflow|automatizza|automazione|integrazione",
            {"connector_call", "connectors_status", "n8n_bridge"}),
     _group("files", r"\bfile|cartell|folder|document|\bpdf|excel|\bword\b|\btxt\b|copia|sposta|elimin|rinomin|appunti|clipboard|cestino|scarica|download|riassum|leggi il",
-           {"file_controller", "large_file_reader", "file_processor", "clipboard_manager", "gestisci_testo"}),
-    _group("desktop", r"computer use|computer input|usa il computer|clicc|click|digita|scrivi|\btype\b|\btast|\bpress|volume|luminos|brightness|wifi|bluetooth|monitor|desktop|mouse|schermata|finestra|window|scorciatoi|shortcut|gesti|\bmano\b",
+           {"file_controller", "large_file_reader", "file_processor", "clipboard_manager", "gestisci_testo", "deck_pipeline", "workspace_reader"}),
+    _group("desktop", r"computer use|computer input|computer stop|stop computer|computer pause|pause computer|computer screenshot|usa il computer|clicc|click|digita|scrivi|\btype\b|\btast|\bpress|volume|luminos|brightness|wifi|bluetooth|monitor|desktop|mouse|schermata|finestra|window|scorciatoi|shortcut|gesti|\bmano\b",
            {"desktop_control", "computer_control", "press_key", "computer_settings", "manage_monitor",
             "accessibility_read_screen", "ada_computer_use", "automation_shortcuts",
-            "computer_input"}),
+            "computer_input", "computer_task", "computer_screenshot", "computer_click",
+            "computer_type", "computer_move", "computer_key", "computer_stop",
+            "computer_use_loop"}),
     _group("vision", r"ocr|uia|accessibilit|cattura|cambiamento sullo schermo|screen change|schermo|screen|camera|webcam|guarda|\bvedi|\blook|foto|immagine|screenshot|cosa c'?è",
            {"screen_process", "close_camera", "accessibility_read_screen",
-            "computer_perception"}),
+            "computer_perception", "computer_task", "computer_screenshot"}),
     _group("browser", r"browser|pagina|\bsito|\bsite|\bweb\b|\burl\b|http|www|google|chrome|edge|youtube|video|netflix|prime|scheda|\btab\b|leggi|cerca|search",
            {"browser_control", "read_active_page", "read_page", "stop_reading", "open_website", "click_link",
-            "youtube_video", "streaming_services", "web_search"}),
+                "youtube_video", "streaming_services", "web_search", "browser_automation", "computer_task"}),
+    _group("fables", r"\bfables(?:\.gg)?\b|play\.fables\.gg|friends\s*(?:&|and)\s*fables",
+           {"fables_workflow", "supervisor_agent", "research_agent",
+                "debugger_agent", "browser_automation"}),
     _group("code", r"codice|\bcode\b|vscode|programm|script|\bbug|debug|python|funzion|repository|\brepo\b|\bgit\b|commit|svilupp|ricerc|research|\bcad\b|openscad|stampa 3d",
-           {"vscode_agent", "vscode_control", "vscode_web", "code_helper", "dev_agent", "coder_agent", "debugger_agent",
+           {"vscode_agent", "vscode_control", "vscode_web", "code_helper", "dev_agent", "coder_agent", "debugger_agent", "file_processor",
             "supervisor_agent", "research_agent", "ada_cad_printer", "llm_api_bridge"}),
     _group("home", r"\bluce\b|\bluci\b|lampad|\bpresa\b|termostat|\bcasa\b|smart|kasa|\blight",
            {"kasa_smart_home", "smart_device_control"}),
@@ -81,12 +86,16 @@ GROUPS: tuple[Group, ...] = (
     _group("applications", r"\b(apri|aprimi|avvia|avvii|lancia|launch|open|start)\b",
            {"app_launcher"}),
     _group("terminal", r"\bterminal(?:e)?\b|\bcomando shell\b|\besegui (?:il )?comando\b|\brun (?:the )?command\b",
-           {"terminal_run"}),
+           {"terminal_run", "terminal_exec"}),
+    _group("terminal_open", r"\b(?:apri|aprimi|avvia|lancia|open|start)\s+(?:il\s+)?(?:terminale|terminal|cmd|prompt dei comandi)\b",
+           {"terminal_open", "terminal_open_ext"}),
+    _group("chatbot", r"\bchatbot\b|chat\s*bot|pianifica(?:re)?\s+(?:i\s+)?contenuti|plan\s+content",
+           {"chatbot_plan"}),
     _group("agent", r"\b(?:fai|compila|esegui|automatizza|agent|loop|obiettivo)\b",
            {"agent_loop"}),
-    _group("games", r"gioc|\bgame|steam|\bepic\b", {"game_updater"}),
+    _group("games", r"gioc|\bgame|steam|\bepic\b", {"game_updater", "subway_surfer"}),
     _group("ui", r"pannell|panel|layout|focus|\bdock|workspace|nascondi|\bhide|mostra|\bshow|\blog\b|interfaccia|chiudi il|apri il",
-           {"ui_layout"}),
+           {"ui_layout", "interface_studio"}),
     _group("hud_map", r"\bhud\b|mappa 3d|\bmappa\b|pianet|sistema solare|\btour\b|scenario|apri (?:il )?sistema|mostra (?:il )?(?:sistema|modulo|pianeta)",
            {"hud_control"}),
 )
@@ -109,6 +118,8 @@ class ToolRouter:
 
     def _matched_groups(self, text: str) -> list[Group]:
         hits = [group for group in self._groups if group.pattern.search(text)]
+        if any(group.name == "fables" for group in hits):
+            hits = [group for group in hits if group.name != "browser"]
         terminal_request = re.search(
             r"\bterminal(?:e)?\b|\bcomando shell\b|"
             r"\besegui (?:il )?comando\b|\brun (?:the )?command\b",
@@ -159,6 +170,19 @@ class ToolRouter:
             ]
         else:
             hits = self._matched_groups(routing_text)
+        if any(group.name == "fables" for group in hits):
+            hits = [
+                group
+                for group in hits
+                if group.name != "browser"
+            ]
+        if re.search(
+            r"\b(?:mappa\s+(?:dei\s+moduli|la\s+cartella)|cerca\s+nella\s+cartella|"
+            r"workspace\s+map|folder\s+map)\b",
+            routing_text,
+            re.IGNORECASE,
+        ):
+            hits = [group for group in hits if group.name == "files"]
         if not hits:
             return []
 

@@ -77,6 +77,35 @@ def test_agent_loop_is_selected_for_explicit_multi_step_requests():
     assert router.select_for_request("Dimmi una curiosità", declarations) == []
 
 
+def test_fables_requests_select_workflow_and_existing_browser_tools():
+    declarations = [
+        decl("fables_workflow"),
+        decl("browser_control"),
+        decl("read_active_page"),
+        decl("open_website"),
+        decl("browser_automation"),
+        decl("computer_settings"),
+    ]
+
+    selected = names(
+        ToolRouter().select_for_request(
+            "Jarvis, vai su Fables e accetta",
+            declarations,
+        )
+    )
+
+    assert {
+        "fables_workflow",
+        "browser_automation",
+    } <= selected
+    assert not {
+        "browser_control",
+        "read_active_page",
+        "open_website",
+    } & selected
+    assert "computer_settings" not in selected
+
+
 def test_local_selection_uses_only_tools_relevant_to_the_current_request():
     declarations = [
         decl("app_launcher"),

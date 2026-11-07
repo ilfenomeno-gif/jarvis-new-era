@@ -22,6 +22,7 @@ youtube-transcript-api
 python-pptx
 fastapi
 uvicorn[standard]
+PyYAML>=6.0
 cryptography
 python-multipart
 comtypes; sys_platform == "win32"

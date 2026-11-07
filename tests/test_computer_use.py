@@ -11,13 +11,40 @@ from core import computer_use
 
 
 def test_allowlist_is_configurable_and_normalized():
-    assert computer_use.allowed_processes({}) == computer_use.DEFAULT_ALLOWED_PROCESSES
+    assert {
+        "cmd.exe",
+        "conhost.exe",
+        "powershell.exe",
+        "pwsh.exe",
+        "windowsterminal.exe",
+        "openconsole.exe",
+    } <= computer_use.allowed_processes({})
     assert computer_use.allowed_processes({
         computer_use.INPUT_ALLOWLIST_ENV: r"C:\Apps\Word.exe, notepad.EXE"
     }) == {"word.exe", "notepad.exe"}
     assert computer_use.allowed_processes({
         computer_use.INPUT_ALLOWLIST_ENV: ""
     }) == set()
+
+
+def test_default_allowlist_includes_visible_terminal_hosts():
+    assert computer_use.allowed_processes({}) >= {
+        "cmd.exe",
+        "conhost.exe",
+        "powershell.exe",
+        "pwsh.exe",
+        "windowsterminal.exe",
+        "openconsole.exe",
+    }
+
+
+def test_terminal_foreground_is_eligible_for_confirmed_input(monkeypatch):
+    monkeypatch.setattr(computer_use, "_require_windows", lambda: None)
+    monkeypatch.setattr(
+        computer_use, "foreground_process", lambda: (42, "cmd.exe")
+    )
+
+    assert computer_use.require_allowed_foreground() == (42, "cmd.exe")
 
 
 def test_perceptual_hash_is_stable_and_changes_with_screen_content():

@@ -482,6 +482,11 @@ def desktop_control(
 
 TOOL = {
     "name": "desktop_control",
+    "capabilities": {
+        "effects": ["write", "destructive"],
+        "sensitive_arguments": ["path", "url", "task"],
+        "requires_confirmation": True,
+    },
     "description": "Controls the desktop: wallpaper, organize, clean, list, stats.",
     "parameters": {
         "type": "OBJECT",

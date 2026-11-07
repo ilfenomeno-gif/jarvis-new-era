@@ -37,8 +37,9 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import Optional
 
 # A pending confirmation is abandoned after this long. Chosen to outlast a
 # normal "hang on, let me look at the screen" pause without leaving a live
@@ -53,6 +54,7 @@ class _Pending:
     detail:  str
     run:     Callable[[], str]
     at:      float
+    on_cancel: Callable[[], None] | None = None
 
 
 _pending: Optional[_Pending] = None
@@ -79,7 +81,14 @@ def _log(msg: str) -> None:
             pass
 
 
-def request(key: str, title: str, detail: str, run: Callable[[], str]) -> str:
+def request(
+    key: str,
+    title: str,
+    detail: str,
+    run: Callable[[], str],
+    *,
+    on_cancel: Callable[[], None] | None = None,
+) -> str:
     """Park an irreversible action behind the on-screen gate.
 
     Returns the sentence the tool should hand back to the model — phrased as an
@@ -95,7 +104,7 @@ def request(key: str, title: str, detail: str, run: Callable[[], str]) -> str:
 
     with _lock:
         _pending = _Pending(key=key, title=title, detail=detail,
-                            run=run, at=time.monotonic())
+                            run=run, at=time.monotonic(), on_cancel=on_cancel)
 
     try:
         _show_cb(title, detail)
@@ -134,10 +143,12 @@ def resolve(accepted: bool) -> None:
 
     if time.monotonic() - p.at > TIMEOUT_SECONDS:
         _log(f"SYS: Confirmation expired — {p.title}")
+        _notify_cancel(p)
         return
 
     if not accepted:
         _log(f"SYS: Cancelled — {p.title}")
+        _notify_cancel(p)
         return
 
     def _worker():
@@ -149,6 +160,15 @@ def resolve(accepted: bool) -> None:
 
     threading.Thread(target=_worker, daemon=True,
                      name=f"confirm-{p.key}").start()
+
+
+def _notify_cancel(pending: _Pending) -> None:
+    if pending.on_cancel is None:
+        return
+    try:
+        pending.on_cancel()
+    except Exception as exc:
+        _log(f"ERR: Confirmation cancellation callback failed — {exc}")
 
 
 def pending_title() -> str:

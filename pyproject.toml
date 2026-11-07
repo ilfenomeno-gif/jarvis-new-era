@@ -1,0 +1,62 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jarvis-vii"
+version = "0.1.0"
+description = "JARVIS VII — assistente agentico multimodale (visione + LLM + automazione desktop)"
+requires-python = ">=3.11"
+readme = "README.md"
+license = { text = "Proprietary" }
+authors = [{ name = "PC" }]
+
+dependencies = [
+    # TODO: consolida da plugins/requirements.txt e providers/
+    # "openai>=1.40",
+    # "playwright>=1.45",
+    # "pillow>=10.4",
+    # "numpy>=1.26",
+    # "pydantic>=2.8",
+    # "pyyaml>=6.0",
+    # "python-dotenv>=1.0",
+    # "websockets>=12",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "black>=24",
+    "pre-commit>=3.7",
+]
+
+[project.scripts]
+jarvis = "jarvis.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_ignores = true
+ignore_missing_imports = true
+packages = ["jarvis"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q --strict-markers"
+asyncio_mode = "auto"

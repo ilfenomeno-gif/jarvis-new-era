@@ -192,6 +192,14 @@ class HudBridge:
     def push_chat(self, role: str, text: str) -> None:
         self._broadcast({"type": "chat", "role": role, "text": text})
 
+    def push_chat_stream(self, phase: str, text: str = "") -> None:
+        """Publish an incremental assistant message on the existing HUD SSE channel."""
+        if phase not in {"start", "append", "end"}:
+            raise ValueError("chat stream phase must be start, append, or end")
+        if not isinstance(text, str):
+            raise TypeError("chat stream text must be a string")
+        self._broadcast({"type": "chat_stream", "phase": phase, "text": text})
+
     def command(self, action: str, **kwargs) -> None:
         """Send a command to the HUD so Jarvis can drive the 3D map UI.
 

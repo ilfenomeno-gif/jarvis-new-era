@@ -43,6 +43,11 @@ def proxy_launcher_action(parameters: dict, **kwargs) -> str:
 
 TOOL = {
     "name": "proxy_launcher",
+    "capabilities": {
+        "effects": ["destructive"],
+        "sensitive_arguments": ["command", "cwd"],
+        "requires_confirmation": True,
+    },
     "description": "Runs a shell command in a subprocess bypassing pythonw.exe whitelist restrictions. Use for build commands, compilation, or any system-level execution.",
     "parameters": {
         "type": "OBJECT",

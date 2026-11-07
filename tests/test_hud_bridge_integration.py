@@ -7,8 +7,9 @@ import threading
 from types import SimpleNamespace
 from urllib.request import Request, urlopen
 
-import main
 from PyQt6.QtCore import QUrl
+
+import main
 from core.hud_bridge import HudBridge
 from ui import MainWindow, _HudBrowserPage
 
@@ -226,6 +227,25 @@ def test_supplied_hud_has_live_telemetry_and_no_fake_gauges():
     assert "function renderStats(stats)" in html
     assert "function tickG" not in html
     assert "localStorage" not in html
+
+
+def test_hud_bridge_publishes_incremental_chat_events():
+    bridge = HudBridge()
+    events = []
+    bridge._broadcast = events.append
+
+    bridge.push_chat_stream("start")
+    bridge.push_chat_stream("append", "Ciao")
+    bridge.push_chat_stream("end")
+
+    assert events == [
+        {"type": "chat_stream", "phase": "start", "text": ""},
+        {"type": "chat_stream", "phase": "append", "text": "Ciao"},
+        {"type": "chat_stream", "phase": "end", "text": ""},
+    ]
+    html = bridge.html_path.read_text(encoding="utf-8")
+    assert 'case"chat_stream"' in html
+    assert "streamingChatNode.textContent" in html
 
 
 class _Stack:

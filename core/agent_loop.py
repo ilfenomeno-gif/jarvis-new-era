@@ -195,6 +195,7 @@ class AgentLoop:
         hash_frame: Callable[[Any], str] | None = None,
         kill_switch: Callable[[], bool] | None = None,
         arm_kill_switch: Callable[[], Any] | None = None,
+        interrupt_controller: Any = None,
         log_dir: Path | None = None,
     ):
         configured_limit = _configured_max_steps()
@@ -223,6 +224,7 @@ class AgentLoop:
         self._hash_frame = hash_frame or computer_use.perceptual_hash
         self._kill_switch = kill_switch or computer_use.emergency_stop_triggered
         self._arm_kill_switch = arm_kill_switch or computer_use.arm_emergency_stop
+        self._interrupt_controller = interrupt_controller
         self._log_dir = log_dir or Path(__file__).resolve().parent.parent / "logs"
         self._log_path = self._log_dir / (
             "agent_loop_" + datetime.now().strftime("%Y%m%d_%H%M%S_%f") + ".log"
@@ -237,6 +239,8 @@ class AgentLoop:
         return result
 
     def _check_session(self, expected: tuple[int, str]) -> str | None:
+        if self._interrupt_controller is not None and self._interrupt_controller.stopped:
+            return "killed"
         if self._kill_switch():
             return "killed"
         try:
@@ -246,6 +250,10 @@ class AgentLoop:
         if current != expected:
             return "failed: foreground window changed; agent stopped."
         return None
+
+    async def _interrupt_checkpoint(self) -> None:
+        if self._interrupt_controller is not None:
+            await self._invoke(self._interrupt_controller.checkpoint)
 
     def _log_step(
         self,
@@ -289,6 +297,10 @@ class AgentLoop:
         history: list[dict[str, Any]] = []
         unchanged_steps = 0
         for step in range(1, self.max_steps + 1):
+            try:
+                await self._interrupt_checkpoint()
+            except InterruptedError:
+                return {"result": "killed"}
             stopped = self._check_session(expected_foreground)
             if stopped:
                 if stopped == "killed":
@@ -351,6 +363,10 @@ class AgentLoop:
                     if stopped == "killed":
                         return {"result": "killed"}
                     return {"result": "failed", "reason": stopped.removeprefix("failed: ")}
+                try:
+                    await self._interrupt_checkpoint()
+                except InterruptedError:
+                    return {"result": "killed", "steps": len(history)}
                 parameters = _input_for_plan(
                     plan, expected_foreground[0], expected_foreground[1]
                 )

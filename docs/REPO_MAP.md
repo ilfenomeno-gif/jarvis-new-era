@@ -129,3 +129,19 @@ Avvio osservato il 2026-10-04, prima di copiare la guida o creare documenti:
 Questa baseline prova l'avvio del processo, la UI visibile, il discovery e il
 plugin GEV; non prova una sessione Gemini completa, input microfono o output
 audio.
+
+## Stato verificato del checkout corrente (2026-11-04)
+
+La mappa M0 sopra è storica. I percorsi qui sotto sono stati verificati nel checkout desktop corrente:
+
+- Orchestrazione: `main.py` gestisce Gemini Live, chiamate tool, audio e riconnessioni. La chat locale passa da `core/brain_router.py` a Ollama; per default gli eventi vengono raccolti prima della risposta UI, mentre `JARVIS_STREAM_TOKEN=1` inoltra i chunk al bridge SSE HUD. `core/llm_client.py` espone API HTTP sincrone e uno stream separato a frasi per TTS; non è il percorso `BrainRouter` né il backend di `core/ws_server.py`. `core/prompt_router.py` seleziona profili statici per keyword. `core/critic_loop.py` è un helper di revisione limitato; `core/chat_orchestrator.py` persiste soprattutto conversazioni di pianificazione con adapter chatbot.
+- Voce: `core/stt.py`, `core/tts.py`, `core/wake_word.py`, `core/audio_devices.py` e `core/voice_transport.py`. Il wake-word ha inference su thread dedicato; la discovery/prova dei dispositivi audio è memorizzata in cache e avviata fuori dal thread UI.
+- Computer e terminale: `core/computer_vision.py` fa OCR locale; `core/computer_input.py` fornisce input iniettabile; `core/computer_use.py` controlla foreground, allowlist ed emergency stop. `core/terminal_agent.py` usa `core/terminal_guard.py`, allowlist e `shell=False`.
+- Computer Use Fase A: `core/computer_loop.py` coordina piano, azioni terminali/browser DOM, verifica, memoria, audit e retry; `actions/computer_loop.py` lo espone solo con `JARVIS_COMPUTER_LOOP=1` (default off). `core/clipboard.py` collega clipboard Windows/PowerShell e clipboard browser. Test e benchmark isolati sono in `tests/test_computer_loop*.py` e `benchmarks/bench_computer_{use,browser}.py`; risultati e limiti in `docs/impl/COMPUTER-USE-001.md`.
+- Rete: `core/ws_server.py` è loopback-only e autenticato; `core/mcp_server.py` espone MCP su stdio; `core/mcp_transport.py` gestisce trasporti stdio/HTTP; `core/n8n_outbox.py` fa polling outbound.
+- Plugin: `core/plugin_loader.py` gestisce discovery e lifecycle. `core/plugin_sandbox.py` isola il processo Python con timeout e cap output, ma non è un confine OS contro codice ostile.
+- HUD: `core/widget_registry.py` valida e limita frequenza dei payload; `core/widget_renderers.py` contiene renderer PyQt; `core/hud_bridge.py` espone HTTP/SSE loopback. `assets/viewer3d/src/viewer.js` è già JavaScript/Three.js con Rapier WASM; non è necessario avviare una migrazione totale.
+- Profilazione e sidecar: `benchmarks/bench_core.py` misura router, registry widget, round-trip SQLite e JSON serializzazione. `core/sidecar_runtime.py` e `sidecars/` definiscono JSON-RPC v1 loopback opt-in, ma nessun tool di `main.py` o `ui.py` è stato migrato.
+- Memoria/performance: `core/memory_store.py` usa WAL; `JARVIS_MEMORY_POOL=1` abilita una connessione SQLite persistente per thread con `synchronous=NORMAL`, mentre il default `0` conserva connessioni per operazione. `JARVIS_SQLITE_POOLED` resta alias di compatibilità; `MemoryStore.close()` rilascia tutte le connessioni del pool.
+- CI sidecar: `.github/workflows/build-sidecars.yml` installa Rust stable e .NET 8 SDK, compila gli skeleton e avvia i test smoke JSON-RPC v1 sui binari. I sidecar restano health-only e non vengono avviati da JARVIS; il gate CI è da chiudere con un run verde.
+- Baseline e piano: vedi `docs/impl/PERF-POLYGLOT-000.md`. I valori attuali sono microbenchmark locali e non sostituiscono misure TTFT, audio hardware, azione desktop o render Qt.

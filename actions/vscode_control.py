@@ -10,6 +10,11 @@ from core.guardrails import validate_command
 
 PLUGIN = {
     "name": "vscode_control",
+    "capabilities": {
+        "effects": ["write", "destructive"],
+        "sensitive_arguments": ["path", "command"],
+        "requires_confirmation": True,
+    },
     "description": (
         "Open Visual Studio Code or a folder/file in it, open a PowerShell "
         "terminal in a working directory, or run an allowed command and return "

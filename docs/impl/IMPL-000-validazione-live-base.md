@@ -152,3 +152,34 @@ Checklist prova manuale:
 | F8 — Recap/registro/commit | È presente solo un recap provvisorio nella scheda; registro master e commit finale non aggiornati. | APERTA |
 
 **Esito del recheck:** F1–F4 sono concluse e F6 è stata rieseguita. La prova locale ha confermato a L2 le risposte HTTP di tutte le fixture e un singolo campione NVML. I limiti del compileall completo e di unittest sono registrati. Non tutto il ciclo è completo. `ROADMAP.md` resta copia identica alla fonte; codice applicativo invariato. IMPL-000 resta aperta per le prove GUI/audio/Gemini e F8; non passare alla 001.
+
+## Baseline test
+
+Eseguire la suite con `python -m pytest -q`. I sette casi noti sono marcati
+`pre_existing` e `xfail(strict=False)`: pytest li esegue normalmente, li mostra
+come `XFAIL` se continuano a fallire e li mostra come `XPASS` (senza fallire la
+suite) quando la causa viene corretta. Per escluderli temporaneamente:
+`python -m pytest -q -m "not pre_existing"`.
+
+| Test | Motivazione |
+|------|-------------|
+| `test_audio_output.py::test_play_audio_survives_portaudio_write_failure` | L'output audio locale segnala `PortAudioError: No audio driver`. |
+| `test_deck_pipeline.py::test_presentation_request_is_routed_automatically_without_deck_command` | Il router non seleziona `deck_pipeline` e `web_search` per la richiesta. |
+| `test_file_processor.py::test_script_execution_requires_confirmation_before_subprocess` | Il mock del subprocess non rispetta la chiamata corrente del file processor. |
+| `test_file_processor.py::test_host_requires_exact_script_path_confirmation` | Il flusso di conferma host diverge dal contratto esercitato dal test. |
+| `test_interface_studio.py::test_studio_tool_contract_and_hud_command_handlers` | Gli handler `studio_*` attesi non sono presenti nell'HTML HUD. |
+| `test_viewer3d.py::test_real_page_model_events_restore_viewer_and_report_load_errors` | `core.viewer3d` non esporta `save_screenshot`, import richiesto dal test. |
+| `test_voice_config.py::test_default_voice_is_jarvis_voice_and_iris_uses_female_voice` | `memory.config_manager` non espone `get_iris_voice`. |
+
+Quando si corregge ciascuna causa, rimuovere da quel test sia
+`@pytest.mark.pre_existing` sia `@pytest.mark.xfail`; non eliminare le asserzioni.
+
+Verifica baseline (2026-11-05): `python -m pytest -q` → 1091 passed, 16
+skipped, 7 xfailed; `python -m pytest -q -m "not pre_existing"` → 1091 passed,
+16 skipped, 7 deselected. Dopo la rimozione del BOM, TOML e raccolta pytest
+standard funzionano. `python -m ruff check .` legge la configurazione ma resta
+non pulito: 856 errori Ruff preesistenti nell'intero repository (21 nei sei
+file di test interessati, principalmente import legacy non ordinati). Non
+sono stati applicati fix Ruff fuori scope. `git diff --check` sui file di
+questo task è pulito; il controllo globale segnala trailing whitespace già
+presente nella modifica precedente a `core/prompt.txt`, rimasta intatta.

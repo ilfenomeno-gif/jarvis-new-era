@@ -1,0 +1,37 @@
+# ── Secrets — never commit ───────────────────────────────────────────────
+config/api_keys.json
+config/voice_settings.json
+config/n8n.json
+config/secrets.json
+config/ui_layout.json
+config/certs/
+*.pem
+*.key
+.env.local
+
+# ── Python ───────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyc
+*.egg-info/
+.venv/
+venv/
+env/
+node_modules/
+.node/
+
+# ── Runtime state ────────────────────────────────────────────────────────
+memory/*.json
+!/memory/learned_patterns.json
+*.log
+/cache/3d/
+/n8n-data/
+
+# ── Editor / OS ──────────────────────────────────────────────────────────
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+*.bak
+
+third_party/stable-fast-3d/

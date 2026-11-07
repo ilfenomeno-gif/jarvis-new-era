@@ -1,0 +1,29 @@
+version: 1
+providers:
+  gemini:
+    adapter: core.gemini_adapter:GeminiAdapter
+    default_model: gemini-2.5-flash
+  ollama:
+    adapter: core.ollama_adapter:OllamaAdapter
+    base_url_env: JARVIS_OLLAMA_URL
+  openai_compat:
+    adapter: core.openai_compat_adapter:OpenAICompatAdapter
+  deepseek:
+    adapter: core.deepseek_adapter:DeepSeekAdapter
+    api_key_env: DEEPSEEK_API_KEY
+roles:
+  chat: {provider: gemini, model: gemini-2.5-flash, tier: fast}
+  planner: {provider: gemini, model: gemini-2.5-flash, tier: fast}
+  vision: {provider: gemini, model: gemini-2.5-flash, tier: smart}
+  json: {provider: gemini, model: gemini-2.5-flash, tier: fast}
+  local: {provider: ollama, model_env: JARVIS_OLLAMA_MODEL}
+  embed: {provider: none, model: none}
+defaults:
+  temperature: 0.4
+  max_output_tokens: 2048
+  timeout_seconds: 45
+  retries: 2
+budget:
+  max_tokens_session: 0
+  max_cost_day: 0
+  warn_ratio: 0.8

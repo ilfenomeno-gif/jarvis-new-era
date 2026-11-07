@@ -18,6 +18,14 @@ class FakeUI:
         self.logs.append(text)
 
 
+class FakeHud:
+    def __init__(self):
+        self.stream_events = []
+
+    def push_chat_stream(self, phase, text=""):
+        self.stream_events.append((phase, text))
+
+
 class FakeRouter:
     backend = "local"
 
@@ -40,6 +48,7 @@ def _live(router):
     live = JarvisLive.__new__(JarvisLive)
     live.ui = FakeUI()
     live._brain_router = router
+    live._hud = FakeHud()
     live._local_messages = [{"role": "system", "content": "test system prompt"}]
     live._local_chat_lock = asyncio.Lock()
     live._local_pending_confirmation = None
@@ -55,6 +64,26 @@ def _live(router):
         },
     }]
     return live
+
+
+def test_local_token_stream_publishes_incremental_content_when_enabled(monkeypatch):
+    monkeypatch.setenv("JARVIS_STREAM_TOKEN", "1")
+    router = FakeRouter([[
+        {"type": "content", "text": "Ciao"},
+        {"type": "content", "text": " Jarvis"},
+        {"type": "done", "full_text": "Ciao Jarvis"},
+    ]])
+    live = _live(router)
+
+    asyncio.run(live._handle_local_text("Ciao"))
+
+    assert live._hud.stream_events == [
+        ("start", ""),
+        ("append", "Ciao"),
+        ("append", " Jarvis"),
+        ("end", ""),
+    ]
+    assert live.ui.logs == ["JARVIS: Ciao Jarvis"]
 
 
 def test_local_text_runs_model_tool_call_and_logs_final_response():

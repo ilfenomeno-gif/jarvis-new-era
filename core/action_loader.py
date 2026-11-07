@@ -34,9 +34,22 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Optional
 
+from core.harness.capabilities import Capability, ToolCapabilities
+
 _NAME_RE = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]{0,63}$")
 _DEFAULT_PARAMS = {"type": "OBJECT", "properties": {}}
-_CTX_KEYS = ("player", "speak", "response", "session_memory")
+_CTX_KEYS = (
+    "player",
+    "speak",
+    "response",
+    "session_memory",
+    "terminal_agent",
+    "browser_automation_client",
+    "computer_agent",
+    "computer_loop",
+    "chat_orchestrator",
+    "harness_runtime",
+)
 
 
 # A tool may declare that the model should NOT be held up waiting for it.
@@ -54,9 +67,8 @@ RISK_CLASSES = ("read", "write", "destructive")
 CONFIRM_PARAM = "confirmed"
 
 
-# Keys this project puts on a declaration for its own bookkeeping. They live
-# here because this file documents what a TOOL dict may contain, and both
-# loaders produce them.
+# Keys this project adds for local bookkeeping. Capability metadata is also
+# stripped because it is not part of the vendor function-declaration schema.
 #
 # THEY MUST NEVER REACH A VENDOR. Gemini validates function declarations
 # against a fixed schema and an unknown field is an error, not something it
@@ -67,16 +79,17 @@ CONFIRM_PARAM = "confirmed"
 # importing providers: a default install never loads that package, and the
 # measured cost of deciding not to is the release's headline number.
 META_KEYS = ("tier", "brief")
+_STRIP_META_KEYS = (*META_KEYS, "capabilities")
 
 
 def strip_meta(decls):
-    """Declarations without META_KEYS. Non-dict entries pass through untouched;
+    """Declarations without local metadata. Non-dict entries pass through untouched;
     a declaration carrying none is returned as the same object, so what an API
     receives is byte-for-byte what it received before these keys existed."""
     out = []
     for decl in decls:
-        if isinstance(decl, dict) and any(k in decl for k in META_KEYS):
-            out.append({k: v for k, v in decl.items() if k not in META_KEYS})
+        if isinstance(decl, dict) and any(k in decl for k in _STRIP_META_KEYS):
+            out.append({k: v for k, v in decl.items() if k not in _STRIP_META_KEYS})
         else:
             out.append(decl)
     return out
@@ -99,6 +112,12 @@ class ActionRecord:
     behavior: Optional[str] = None     # None = the API's default (blocking)
     scheduling: Optional[str] = None   # None = the API's default (WHEN_IDLE)
     risk_class: str = "write"
+    risk_class_declared: bool = False
+    capabilities: ToolCapabilities | None = None
+    capabilities_declared: bool = False
+    capabilities_error: str = ""
+    capability_contract: Capability | None = None
+    capability_contract_error: str = ""
 
 
 class ActionRegistry:
@@ -137,6 +156,30 @@ class ActionRegistry:
     def risk_class(self, name: str) -> str:
         rec = self._actions.get(name)
         return rec.risk_class if rec else "write"
+
+    def risk_class_declared(self, name: str) -> bool:
+        rec = self._actions.get(name)
+        return bool(rec and rec.risk_class_declared)
+
+    def capabilities(self, name: str) -> ToolCapabilities | None:
+        rec = self._actions.get(name)
+        return rec.capabilities if rec else None
+
+    def capabilities_declared(self, name: str) -> bool:
+        rec = self._actions.get(name)
+        return bool(rec and rec.capabilities_declared)
+
+    def capabilities_error(self, name: str) -> str:
+        rec = self._actions.get(name)
+        return rec.capabilities_error if rec else ""
+
+    def get_capability(self, name: str) -> Capability | None:
+        rec = self._actions.get(name)
+        return rec.capability_contract if rec else None
+
+    def capability_error(self, name: str) -> str:
+        rec = self._actions.get(name)
+        return rec.capability_contract_error if rec else ""
 
     def names(self) -> set[str]:
         return set(self._actions.keys())
@@ -202,9 +245,33 @@ def _validate(module, filename: str) -> ActionRecord:
         return ActionRecord(name=name, file=filename,
                             error=f"TOOL['risk_class'] must be one of {RISK_CLASSES}.")
 
+    capabilities = None
+    capabilities_error = ""
+    if "capabilities" in tool:
+        try:
+            capabilities = ToolCapabilities.from_value(tool["capabilities"])
+        except ValueError as exc:
+            capabilities_error = str(exc)
+
+    capability_contract = None
+    capability_contract_error = ""
+    try:
+        capability_tool = dict(tool)
+        if "risk_class" not in capability_tool and "capabilities" not in capability_tool:
+            capability_tool["risk_class"] = risk_class
+        capability_contract = Capability.from_tool_dict(capability_tool)
+    except ValueError as exc:
+        capability_contract_error = str(exc)
+
     return ActionRecord(name=name, description=description.strip(), parameters=parameters,
                         handler=handler, file=filename, valid=True, error="",
                         risk_class=risk_class,
+                        risk_class_declared="risk_class" in tool,
+                        capabilities=capabilities,
+                        capabilities_declared="capabilities" in tool,
+                        capabilities_error=capabilities_error,
+                        capability_contract=capability_contract,
+                        capability_contract_error=capability_contract_error,
                         behavior=_opt_upper(tool.get("behavior"), _BEHAVIORS),
                         scheduling=_opt_upper(tool.get("scheduling"), _SCHEDULING))
 

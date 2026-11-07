@@ -786,6 +786,11 @@ def file_controller(
 
 TOOL = {
     "name": "file_controller",
+    "capabilities": {
+        "effects": ["read", "write", "destructive"],
+        "sensitive_arguments": ["path", "destination", "content", "new_name"],
+        "requires_confirmation": True,
+    },
     "description": "Manages files and folders: list, create, delete, move, copy, rename, read, write, find, disk usage.",
     "parameters": {
         "type": "OBJECT",

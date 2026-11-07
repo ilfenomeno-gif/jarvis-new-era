@@ -37,6 +37,38 @@ def test_active_system_prompt_requires_italian():
     assert ITALIAN_DIRECTIVE in prompt
 
 
+def test_active_system_prompt_contains_jarvis_master_instructions():
+    prompt = (PROJECT_ROOT / "core" / "prompt.txt").read_text(encoding="utf-8")
+
+    required_sections = (
+        "# MASTER PROMPT — JARVIS INTELLECTUAL & AGENTIC CORE",
+        "## ARCHITETTURA COGNITIVA",
+        "## SISTEMA AGENTISTICO",
+        "### 1. Ricerca e scrittura scientifica",
+        "### 2. Handoff a Copilot",
+        "### 3. Mondi Fables.gg",
+        "### 4. Gioco autonomo (Subway Surf)",
+        "### 5. Conversazione e pianificazione contenuti",
+        "### 6. Social e account",
+        "### 7. Server 24/7",
+        "### 8. Canale telefono (WhatsApp-like)",
+        "### 9. Terminale intelligente con override utente",
+        "### 10. Interazione con computer, siti, giochi",
+        "## MEMORIA E STATO",
+        "## SICUREZZA E CONTROLLO UTENTE",
+        "## LIMITI REALISTICI (da dichiarare sempre)",
+        "## FORMATO DI RISPOSTA",
+        "## COMPORTAMENTO ATTESO",
+        "## CRITERI DI SUCCESSO",
+        "Aree, POI e 5e Defaults restano esclusi finché l'utente non li autorizza esplicitamente.",
+        "Non pubblica nulla senza conferma dell'utente",
+        "Jarvis non agisce su denaro, salute, legale o reputazione senza conferma esplicita.",
+    )
+
+    for section in required_sections:
+        assert section in prompt
+
+
 def _load_system_prompt_function(prompt_path, policy_loader, logger):
     main_path = PROJECT_ROOT / "main.py"
     tree = ast.parse(main_path.read_text(encoding="utf-8"), filename=str(main_path))
@@ -54,6 +86,21 @@ def _load_system_prompt_function(prompt_path, policy_loader, logger):
     }
     exec(compile(module, str(main_path), "exec"), namespace)
     return namespace["_load_system_prompt"]
+
+
+def test_system_prompt_loader_includes_jarvis_master_instructions():
+    logger = Mock()
+    load_system_prompt = _load_system_prompt_function(
+        PROJECT_ROOT / "core" / "prompt.txt",
+        lambda: "test security policy",
+        logger,
+    )
+
+    prompt = load_system_prompt()
+
+    assert "# MASTER PROMPT — JARVIS INTELLECTUAL & AGENTIC CORE" in prompt
+    assert "### 10. Interazione con computer, siti, giochi" in prompt
+    assert "test security policy" in prompt
 
 
 def test_system_prompt_fallback_is_italian_and_logs_provenance(tmp_path):

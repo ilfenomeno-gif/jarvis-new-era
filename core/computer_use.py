@@ -6,19 +6,27 @@ import math
 import ntpath
 import os
 import platform
+import shutil
 import threading
 import time
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 
 INPUT_ALLOWLIST_ENV = "JARVIS_INPUT_ALLOWLIST"
 DEFAULT_ALLOWED_PROCESSES = frozenset({
+    "cmd.exe",
+    "conhost.exe",
     "notepad.exe",
     "chrome.exe",
     "msedge.exe",
     "firefox.exe",
     "code.exe",
+    "powershell.exe",
+    "pwsh.exe",
+    "windowsterminal.exe",
+    "openconsole.exe",
 })
 EMERGENCY_STOP_HOTKEY = "ctrl+alt+esc"
 MAX_UIA_CONTROLS = 300
@@ -32,6 +40,26 @@ _keyboard_module = None
 def _require_windows() -> None:
     if platform.system() != "Windows":
         raise RuntimeError("Computer Use input and UI Automation require Windows.")
+
+
+def configure_tesseract(pytesseract_module: Any) -> str:
+    """Configure an installed local Tesseract executable for OCR consumers."""
+    pytesseract = getattr(pytesseract_module, "pytesseract", None)
+    if pytesseract is None:
+        raise TypeError("pytesseract_module must expose pytesseract.tesseract_cmd.")
+    candidates = (
+        shutil.which("tesseract"),
+        r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+        r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+    )
+    executable = next(
+        (candidate for candidate in candidates if candidate and Path(candidate).is_file()),
+        None,
+    )
+    if executable is None:
+        raise RuntimeError("The local Tesseract executable was not found.")
+    pytesseract.tesseract_cmd = executable
+    return executable
 
 
 def allowed_processes(environ: dict[str, str] | None = None) -> frozenset[str]:
@@ -121,6 +149,11 @@ def stop_emergency_stop() -> None:
 
 def emergency_stop_triggered() -> bool:
     return _emergency_stop.is_set()
+
+
+def trigger_emergency_stop() -> None:
+    """Activate the same fail-closed stop used by the global emergency hotkey."""
+    _emergency_stop.set()
 
 
 def _check_emergency_stop() -> None:
@@ -395,6 +428,8 @@ def validate_input_request(parameters: dict[str, Any]) -> str:
 
     if action in {"click", "double_click", "move"}:
         _coordinates(parameters, "x", "y")
+        if action == "click" and parameters.get("button", "left") not in {"left", "right", "middle"}:
+            raise ValueError("button must be left, right, or middle.")
     elif action == "drag":
         _coordinates(parameters, "x1", "y1")
         _coordinates(parameters, "x2", "y2")
@@ -416,6 +451,13 @@ def validate_input_request(parameters: dict[str, Any]) -> str:
         text = parameters.get("text")
         if not isinstance(text, str) or not text or len(text) > 1000:
             raise ValueError("text must contain between 1 and 1000 characters.")
+        interval = parameters.get("interval", 0)
+        if (
+            isinstance(interval, bool)
+            or not isinstance(interval, (int, float))
+            or not 0 <= interval <= 1
+        ):
+            raise ValueError("interval must be a number from 0 to 1.")
     return action
 
 
@@ -471,7 +513,11 @@ def execute_input(parameters: dict[str, Any]) -> dict[str, Any]:
         _check_emergency_stop()
         _assert_same_foreground_with_retry(hwnd, process_name)
         if action == "click":
-            pyautogui.click(x, y)
+            button = parameters.get("button", "left")
+            if button == "left":
+                pyautogui.click(x, y)
+            else:
+                pyautogui.click(x, y, button=button)
         elif action == "double_click":
             pyautogui.doubleClick(x, y)
         else:
@@ -510,10 +556,13 @@ def execute_input(parameters: dict[str, Any]) -> dict[str, Any]:
         result = f"Scrolled {direction} by {amount}."
     elif action in {"type", "type_text"}:
         text = parameters["text"]
+        interval = float(parameters.get("interval", 0))
         for character in text:
             _check_emergency_stop()
             _assert_same_foreground_with_retry(hwnd, process_name)
             pyautogui.write(character, interval=0)
+            if interval:
+                time.sleep(interval)
         result = f"Typed {len(text)} characters."
     _check_emergency_stop()
     return {"result": result, "process": process_name}

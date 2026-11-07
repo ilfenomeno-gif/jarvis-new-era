@@ -201,6 +201,60 @@ def _append_transcript(buffer: list[str], text: str) -> None:
         return
     buffer.append(text)
 
+
+DEFAULT_LOCAL_TOOL_CYCLES = 12
+MAX_CONFIGURED_LOCAL_TOOL_CYCLES = 50
+
+
+def _configured_local_tool_cycles() -> int:
+    raw = os.environ.get("JARVIS_LOCAL_TOOL_CYCLES")
+    if raw is None:
+        return DEFAULT_LOCAL_TOOL_CYCLES
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ValueError("JARVIS_LOCAL_TOOL_CYCLES must be an integer.") from exc
+    if not 1 <= value <= MAX_CONFIGURED_LOCAL_TOOL_CYCLES:
+        raise ValueError(
+            "JARVIS_LOCAL_TOOL_CYCLES must be between 1 and "
+            f"{MAX_CONFIGURED_LOCAL_TOOL_CYCLES}."
+        )
+    return value
+
+
+def _run_fables_workflow_action(parameters: dict, objective: str = "") -> str:
+    from core.internal_workflow import (
+        FABLES_WORLD_URL,
+        InternalWorkflowStore,
+        format_workflow_summary,
+    )
+
+    action = str(parameters.get("action") or "plan").strip().casefold()
+    store = InternalWorkflowStore()
+    if action == "plan":
+        workflow = store.create_fables_plan(
+            str(parameters.get("objective") or objective or "Pianifica un mondo Fables"),
+            parameters.get("world_url") or FABLES_WORLD_URL,
+        )
+    elif action == "simulate":
+        workflow = store.create_fables_plan(
+            str(parameters.get("objective") or objective or "Simulazione workflow Fables"),
+            parameters.get("world_url") or FABLES_WORLD_URL,
+            simulated=True,
+        )
+        workflow = store.run_fables_simulation(workflow["id"])
+    elif action in {"status", "resume"}:
+        workflow_id = str(parameters.get("workflow_id") or "").strip()
+        if not workflow_id:
+            raise ValueError(f"{action} requires workflow_id.")
+        workflow = store.get(workflow_id)
+        if action == "resume":
+            workflow = store.resume_fables_simulation(workflow_id)
+    else:
+        raise ValueError("Fables action must be plan, status, simulate, or resume.")
+    return format_workflow_summary(workflow)
+
+
 TOOL_DECLARATIONS = [
     {
         "name": "open_app",
@@ -388,6 +442,8 @@ TOOL_DECLARATIONS = [
             "Use for ANY single computer control command. "
             "restart, shutdown and toggle_wifi put a confirmation on the user's screen "
             "and do NOT happen until they press it — never claim they are done. "
+            "close_app and close_window also require confirmation because unsaved work "
+            "may be lost. "
             "Volume, brightness and dark mode can be reversed with the `undo` tool."
         ),
         "parameters": {
@@ -591,6 +647,42 @@ TOOL_DECLARATIONS = [
         }
     },
     {
+        "name": "fables_workflow",
+        "description": (
+            "Plans and tracks a Fables world workflow in Jarvis's private SQLite store. "
+            "Actions: plan (persist a checklist only), status (read a workflow), "
+            "simulate (run a local dry-run only), resume (continue a paused or interrupted simulation). "
+            "This tool never clicks Fables, creates real content, enables D&D 5e defaults, "
+            "or creates Areas/Points of Interest. Do not claim a real world was changed. "
+            "The workflow coordinates the existing supervisor, research, and debugger "
+            "agent roles; its fast path does not call their AI APIs. For an explicitly "
+            "authorized live browser task, use the existing browser_control tool; do not "
+            "perform Areas/POI or enable 5e defaults."
+        ),
+        "parameters": {
+            "type": "OBJECT",
+            "properties": {
+                "action": {
+                    "type": "STRING",
+                    "description": "plan | status | simulate | resume (default: plan)",
+                },
+                "objective": {
+                    "type": "STRING",
+                    "description": "World-creation objective or simulation scenario.",
+                },
+                "world_url": {
+                    "type": "STRING",
+                    "description": "HTTPS URL on fables.gg; defaults to the requested world.",
+                },
+                "workflow_id": {
+                    "type": "STRING",
+                    "description": "Workflow identifier for status or resume.",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
         "name": "computer_control",
         "description": "Direct computer control: type, click, hotkeys, scroll, move mouse, screenshots, find elements on screen.",
         "parameters": {
@@ -666,6 +758,11 @@ TOOL_DECLARATIONS = [
     },
     {
         "name": "shutdown_jarvis",
+        "capabilities": {
+            "effects": ["destructive"],
+            "sensitive_arguments": [],
+            "requires_confirmation": True,
+        },
         "description": (
             "Shuts down the assistant completely. "
             "Call this when the user expresses intent to end the conversation, "
@@ -679,6 +776,11 @@ TOOL_DECLARATIONS = [
     },
     {
     "name": "file_processor",
+    "capabilities": {
+        "effects": ["write", "destructive"],
+        "sensitive_arguments": ["file_path", "action", "content"],
+        "requires_confirmation": True,
+    },
     "description": (
         "Processes any file that the user has uploaded or dropped onto the interface. "
         "Use this when the user refers to an uploaded file and wants an action on it. "
@@ -929,6 +1031,45 @@ class JarvisLive:
         self._prompt_router = PromptRouter()
         self._tool_router = ToolRouter()
         self._brain_router = get_router()
+        from agents.computer_agent import ComputerAgent
+        from core.browser_automation import BrowserAutomation
+        from core.chat_orchestrator import ChatOrchestrator
+        from core.chatbot_bridge import MockChatbot
+        from core.terminal_agent import TerminalAgent
+
+        def guard_local_computer_action():
+            from core.computer_use import (
+                arm_emergency_stop,
+                emergency_stop_triggered,
+                require_allowed_foreground,
+            )
+
+            arm_emergency_stop()
+            if emergency_stop_triggered():
+                raise RuntimeError("Computer Use was stopped by Ctrl+Alt+Esc.")
+            require_allowed_foreground()
+
+        self._terminal_agent = TerminalAgent()
+        self._browser_automation = BrowserAutomation()
+        self._computer_agent = ComputerAgent(
+            browser=self._browser_automation,
+            before_local_action=guard_local_computer_action,
+        )
+        self._computer_loop = None
+        if os.environ.get("JARVIS_COMPUTER_LOOP", "0") == "1":
+            from core.audit_log import AuditLog
+            from core.computer_loop import ComputerLoop
+
+            self._computer_loop = ComputerLoop(
+                terminal_agent=self._terminal_agent,
+                audit_log=AuditLog(BASE_DIR / "config" / "audit.jsonl"),
+                browser_automation=self._browser_automation,
+                max_retries=int(os.environ.get("JARVIS_COMPUTER_LOOP_MAX_RETRIES", "3")),
+                timeout_seconds=float(os.environ.get("JARVIS_COMPUTER_LOOP_TIMEOUT", "30")),
+            )
+        self._chat_orchestrator = ChatOrchestrator(
+            chatbots={"MockChatbot": MockChatbot()}
+        )
         self._local_messages: list[dict[str, object]] = []
         self._local_chat_lock = asyncio.Lock()
         self._local_pending_confirmation: dict[str, object] | None = None
@@ -954,6 +1095,21 @@ class JarvisLive:
                 self.ui.write_log(f"SYS: {msg}"),
             ),
         )
+        self._harness_runtime = None
+        if os.environ.get("JARVIS_HARNESS", "0") == "1":
+            from core.harness.adapters import AgentLoopAdapter, ComputerLoopAdapter
+            from core.harness.runtime import HarnessRuntime
+
+            adapters = {"agent_loop": AgentLoopAdapter()}
+            if self._computer_loop is not None:
+                adapters["computer_use_loop"] = ComputerLoopAdapter(self._computer_loop)
+            self._harness_runtime = HarnessRuntime(
+                adapters=adapters,
+                enabled=True,
+                action_registry=self._action_registry,
+            )
+        from core.plugin_terminal_computer import install as install_terminal_computer
+        install_terminal_computer(self.ui)
         _core_names.update(self._action_registry.names())
         from core import task_runner
         task_runner.configure(
@@ -1335,6 +1491,10 @@ class JarvisLive:
     def _on_text_command(self, text: str, *, from_hud: bool = False):
         if not from_hud:
             self._hud.push_chat("user", text)
+        if self._try_handle_fables_text(text):
+            return
+        if self._try_handle_copilot_handoff(text):
+            return
         if not self._loop:
             if from_hud:
                 self._hud.push_chat("system", "Jarvis non è ancora connesso.")
@@ -1397,8 +1557,92 @@ class JarvisLive:
             self._loop
         )
 
+    def _handle_internal_fables_request(self, text: str) -> str | None:
+        import sqlite3
+
+        from core.internal_workflow import (
+            FABLES_WORLD_URL,
+            InternalWorkflowStore,
+            format_workflow_summary,
+            is_fables_request,
+        )
+
+        if not is_fables_request(text):
+            return None
+        simulation = bool(
+            re.search(
+                r"\b(?:simula|simulazione|dry[\s-]?run|diagnostica|"
+                r"accett\w*\s+ma\s+non\s+(?:va|procede|parte|funziona)|"
+                r"accept\w*.*(?:doesn.?t|does not|won.?t)\s+(?:go|work|proceed))\b",
+                text,
+                re.IGNORECASE,
+            )
+        )
+        capability_question = bool(
+            re.search(
+                r"\b(?:puoi|può|riesci|capace|can you|could you)\b",
+                text,
+                re.IGNORECASE,
+            )
+        )
+        if not simulation and not capability_question:
+            return None
+        try:
+            from core.fables_live_executor import select_world_url
+
+            urls = re.findall(r"https://[^\s<>\"']+", text, re.IGNORECASE)
+            world_url = select_world_url(urls, fallback=FABLES_WORLD_URL)
+            store = InternalWorkflowStore()
+            workflow = store.create_fables_plan(
+                text,
+                world_url,
+                simulated=simulation,
+            )
+            if simulation:
+                workflow = store.run_fables_simulation(workflow["id"])
+            return format_workflow_summary(workflow)
+        except (OSError, sqlite3.Error, ValueError) as exc:
+            logging.getLogger(__name__).exception("Fables workflow request failed")
+            return (
+                "Workflow Fables non completato: "
+                f"{type(exc).__name__}: {exc}"
+            )
+
+    def _try_handle_fables_text(self, text: str) -> bool:
+        reply = self._handle_internal_fables_request(text)
+        if reply is None:
+            return False
+        self.ui.write_log(f"{self._asst_name}: {reply}")
+        self._hud.push_chat("assistant", reply)
+        self._session_log.append(f"User: {text}")
+        self._session_log.append(f"{self._asst_name}: {reply}")
+        return True
+
+    def _try_handle_copilot_handoff(self, text: str) -> bool:
+        from core.copilot_bridge import CopilotBridge, handle_copilot_chat_handoff
+
+        bridge = CopilotBridge(repo_root=BASE_DIR)
+        reply = handle_copilot_chat_handoff(
+            text,
+            bridge,
+            confirm_gate.request,
+        )
+        if reply is None:
+            return False
+        self.ui.write_log(f"{self._asst_name}: {reply}")
+        self._hud.push_chat("assistant", reply)
+        self._session_log.append(f"User: {text}")
+        self._session_log.append(f"{self._asst_name}: {reply}")
+        if self.session and "[CONFIRMATION_PENDING]" in reply:
+            self.speak(reply)
+        return True
+
     def _route_voice_transcript(self, text: str) -> bool:
         lowered = text.strip().lower()
+        if self._try_handle_fables_text(text):
+            return True
+        if self._try_handle_copilot_handoff(text):
+            return True
         visibility_request = self._hud_visibility_request(text)
         if visibility_request is not None:
             self._set_hud_humanoid_visible(visibility_request)
@@ -1524,6 +1768,123 @@ class JarvisLive:
             text.strip().lower(),
         ))
 
+    def _action_requires_confirmation(self, name: str, args: dict | None = None) -> bool:
+        if name in {"computer_input", "agent_loop"}:
+            return False
+        if (
+            name == "computer_use_loop"
+            and os.environ.get("JARVIS_COMPUTER_LOOP", "0") != "1"
+        ):
+            return False
+        if os.environ.get("JARVIS_HARNESS", "0") == "1":
+            runtime = getattr(self, "_harness_runtime", None)
+            delegated = (
+                runtime.approval_policy.policy.get("confirmation_delegated_tools", {})
+                if runtime is not None
+                else {}
+            )
+            if delegated.get(name) is True:
+                return False
+            decision = self._harness_approval_decision(name, args or {})
+            if decision is not None:
+                return decision.requires_confirm
+        registry = getattr(self, "_action_registry", None)
+        has_action = getattr(registry, "has", None)
+        risk_class = getattr(registry, "risk_class", None)
+        return bool(
+            callable(has_action)
+            and has_action(name)
+            and callable(risk_class)
+            and risk_class(name) == "destructive"
+        )
+
+    def _harness_approval_decision(self, name: str, args: dict):
+        runtime = getattr(self, "_harness_runtime", None)
+        registry = getattr(self, "_action_registry", None)
+        has_action = getattr(registry, "has", None)
+        if runtime is None:
+            return None
+        spec = {"name": name}
+        risk_is_declared = getattr(registry, "risk_class_declared", None)
+        get_risk = getattr(registry, "risk_class", None)
+        if (
+            callable(has_action)
+            and has_action(name)
+            and callable(risk_is_declared)
+            and risk_is_declared(name)
+            and callable(get_risk)
+        ):
+            spec["risk_class"] = get_risk(name)
+        return runtime.approval_policy.evaluate(
+            spec,
+            args,
+            None,
+            registry=registry,
+        )
+
+    async def _stream_local_chat_events(
+        self,
+        tools: list[dict],
+    ) -> list[dict]:
+        loop = asyncio.get_running_loop()
+        event_queue: asyncio.Queue[tuple[bool, object]] = asyncio.Queue()
+        sentinel = object()
+
+        def publish_from_worker(item: tuple[bool, object]) -> None:
+            loop.call_soon_threadsafe(event_queue.put_nowait, item)
+
+        def produce_events() -> None:
+            try:
+                for event in self._brain_router.stream_chat(
+                    self._local_messages,
+                    tools=tools,
+                ):
+                    publish_from_worker((True, event))
+            except Exception as exc:
+                publish_from_worker((False, exc))
+            finally:
+                publish_from_worker((True, sentinel))
+
+        hud = getattr(self, "_hud", None)
+        publish_chat_stream = getattr(hud, "push_chat_stream", None)
+        stream_started = False
+        events = []
+        failure: Exception | None = None
+        worker = threading.Thread(
+            target=produce_events,
+            name="jarvis-local-chat-stream",
+            daemon=True,
+        )
+        try:
+            if callable(publish_chat_stream):
+                publish_chat_stream("start")
+                stream_started = True
+            worker.start()
+
+            while True:
+                succeeded, event = await event_queue.get()
+                if event is sentinel:
+                    break
+                if not succeeded:
+                    failure = (
+                        event
+                        if isinstance(event, Exception)
+                        else RuntimeError("Local model stream failed unexpectedly")
+                    )
+                    continue
+                if not isinstance(event, dict):
+                    raise TypeError("Local model stream events must be objects")
+                events.append(event)
+                if event.get("type") == "content" and callable(publish_chat_stream):
+                    publish_chat_stream("append", event.get("text", ""))
+            worker.join()
+            if failure is not None:
+                raise failure
+        finally:
+            if stream_started:
+                publish_chat_stream("end")
+        return events
+
     async def _handle_local_text(self, text: str) -> None:
         async with self._local_chat_lock:
             self.ui.set_state("THINKING")
@@ -1567,12 +1928,15 @@ class JarvisLive:
                 completed_mutations: set[str] = set()
                 compound_request = self._explicit_app_type_request(text)
                 launched_compound_app = False
-                for _ in range(5):
-                    events = await asyncio.to_thread(
-                        lambda: list(self._brain_router.stream_chat(
-                            self._local_messages, tools=tools
-                        ))
-                    )
+                for _ in range(_configured_local_tool_cycles()):
+                    if os.environ.get("JARVIS_STREAM_TOKEN", "0") == "1":
+                        events = await self._stream_local_chat_events(tools)
+                    else:
+                        events = await asyncio.to_thread(
+                            lambda: list(self._brain_router.stream_chat(
+                                self._local_messages, tools=tools
+                            ))
+                        )
                     if not any(event.get("type") == "done" for event in events):
                         raise RuntimeError("Local model ended without a completion event")
                     assistant_text = "".join(
@@ -1847,9 +2211,17 @@ class JarvisLive:
                 name=pending["name"],
                 args=args,
             )
+            registry_confirmation = self._action_requires_confirmation(
+                pending["name"],
+                pending["args"],
+            )
+            needs_user_confirmed = (
+                pending["name"] in {"terminal_run", "agent_loop"}
+                or registry_confirmation
+            )
             response = (
                 await self._execute_tool(tool_call, user_confirmed=True)
-                if pending["name"] in {"terminal_run", "agent_loop"}
+                if needs_user_confirmed
                 else await self._execute_tool(tool_call)
             )
             response_result = response.response.get("result", "")
@@ -2107,6 +2479,8 @@ class JarvisLive:
     def _build_config(self) -> types.LiveConnectConfig:
         from datetime import datetime
 
+        from core.action_loader import strip_meta
+
         # Load customization from config
         try:
             _cfg = json.loads(open(API_CONFIG_PATH, encoding="utf-8").read())
@@ -2158,7 +2532,9 @@ class JarvisLive:
             input_audio_transcription={},
             system_instruction="\n".join(parts),
             tools=[{
-                "function_declarations": self._select_tool_declarations()
+                "function_declarations": strip_meta(
+                    self._select_tool_declarations()
+                )
             }],
             # Hand back the handle captured from the last session_resumption
             # update. `handle=None` is exactly the old behaviour (ask for
@@ -2198,6 +2574,17 @@ class JarvisLive:
         require_policy_file()
         name = fc.name
         args = dict(fc.args or {})
+        approval = self._harness_approval_decision(name, args)
+        if approval is not None and not approval.allowed:
+            return types.FunctionResponse(
+                id=fc.id,
+                name=name,
+                response={
+                    "result": "Action blocked by harness approval policy.",
+                    "reason": approval.reason,
+                    "risk_level": approval.risk_level,
+                },
+            )
         local_mode = (
             getattr(getattr(self, "_brain_router", None), "backend", None) == "local"
         )
@@ -2529,6 +2916,56 @@ class JarvisLive:
                     },
                 )
 
+        if self._action_requires_confirmation(name, args):
+            requested_args = {
+                key: value
+                for key, value in args.items()
+                if key != "confirmed"
+            }
+            pending = getattr(self, "_local_pending_confirmation", None)
+            explicit_confirmation = self._is_explicit_confirmation(
+                getattr(self, "_last_user_text", "")
+            )
+            matches_pending = bool(
+                pending
+                and pending.get("name") == name
+                and pending.get("args") == requested_args
+            )
+            if user_confirmed:
+                args = {**requested_args, "confirmed": True}
+                if pending and pending.get("name") == name:
+                    self._local_pending_confirmation = None
+            elif matches_pending and explicit_confirmation:
+                args = {**requested_args, "confirmed": True}
+                self._local_pending_confirmation = None
+            else:
+                if pending and pending.get("name") == name and explicit_confirmation:
+                    self._local_pending_confirmation = None
+                    return types.FunctionResponse(
+                        id=fc.id,
+                        name=name,
+                        response={
+                            "result": (
+                                "The action differs from the one the user approved; "
+                                "no action was taken."
+                            )
+                        },
+                    )
+                self._local_pending_confirmation = {
+                    "id": fc.id,
+                    "name": name,
+                    "args": requested_args,
+                }
+                return types.FunctionResponse(
+                    id=fc.id,
+                    name=name,
+                    response={
+                        "result": "Ask the user for explicit confirmation",
+                        "action": name,
+                        "parameters": requested_args,
+                    },
+                )
+
         if name == "save_memory":
             category = args.get("category", "notes")
             key      = args.get("key", "")
@@ -2558,6 +2995,16 @@ class JarvisLive:
                         "speak": speak,
                         "response": None,
                         "session_memory": None,
+                        "terminal_agent": getattr(self, "_terminal_agent", None),
+                        "browser_automation_client": getattr(
+                            self, "_browser_automation", None
+                        ),
+                        "computer_agent": getattr(self, "_computer_agent", None),
+                        "computer_loop": getattr(self, "_computer_loop", None),
+                        "chat_orchestrator": getattr(
+                            self, "_chat_orchestrator", None
+                        ),
+                        "harness_runtime": getattr(self, "_harness_runtime", None),
                     }
                     if name == "generate_3d_model":
                         from core import task_runner
@@ -2609,6 +3056,13 @@ class JarvisLive:
             elif name == "browser_control":
                 r = await loop.run_in_executor(None, lambda: browser_control(parameters=args, player=self.ui))
                 result = r or "Done."
+
+            elif name == "fables_workflow":
+                result = await asyncio.to_thread(
+                    _run_fables_workflow_action,
+                    args,
+                    getattr(self, "_last_user_text", ""),
+                )
 
             elif name == "read_active_page":
                 r = await loop.run_in_executor(None, lambda: read_active_page(parameters=args, player=self.ui))
@@ -2800,6 +3254,15 @@ class JarvisLive:
 
         if isinstance(result, str):
             self._observe_pattern_tool_result(name, args, result)
+
+        if name == "terminal_run" and isinstance(result, dict):
+            terminal_output = "\n".join(
+                value.strip()
+                for value in (result.get("stdout", ""), result.get("stderr", ""))
+                if isinstance(value, str) and value.strip()
+            )
+            if terminal_output:
+                self.ui.write_log(f"TERM: {terminal_output}")
 
         if not self.ui.muted:
             self.ui.set_state("LISTENING")
@@ -3082,10 +3545,25 @@ class JarvisLive:
                                     == "computer_input"
                                     and self._is_explicit_confirmation(full_in)
                                 )
+                                pending_name = (
+                                    pending_confirmation.get("name")
+                                    if pending_confirmation
+                                    else None
+                                )
+                                pending_registry_action = bool(
+                                    pending_name
+                                    and self._action_requires_confirmation(
+                                        pending_name,
+                                        pending_confirmation.get("args"),
+                                    )
+                                )
                                 if (
                                     pending_confirmation
-                                    and pending_confirmation.get("name")
-                                    in {"terminal_run", "computer_input", "agent_loop"}
+                                    and (
+                                        pending_name
+                                        in {"terminal_run", "computer_input", "agent_loop"}
+                                        or pending_registry_action
+                                    )
                                     and getattr(
                                         getattr(self, "_brain_router", None),
                                         "backend",
@@ -3501,6 +3979,7 @@ class JarvisLive:
         try:
             from dashboard.server import DashboardServer
             self._dashboard = DashboardServer()
+            self._dashboard.set_capability_registry(self._action_registry)
             self._dashboard.set_connect_callback(self._on_phone_connected)
             asyncio.create_task(self._dashboard.serve())
             # Runs for the whole lifetime, not just inside an active session
@@ -3709,6 +4188,17 @@ class JarvisLive:
             pass
         finally:
             self._hud.stop()
+            browser_automation = getattr(self, "_browser_automation", None)
+            if browser_automation is not None:
+                try:
+                    browser_automation.close()
+                except Exception as exc:
+                    message = (
+                        "SYS: Browser automation could not be closed cleanly "
+                        f"({type(exc).__name__})."
+                    )
+                    print(f"[Browser] {message}")
+                    self.ui.write_log(message)
             try:
                 self.stop_accessibility_hotkeys()
             except RuntimeError as exc:
@@ -3731,8 +4221,221 @@ class JarvisLive:
                 except Exception:
                     pass
 
+def _handle_fables_cli(
+    argv: list[str],
+    *,
+    input_fn=input,
+    browser_action=browser_control,
+    input_action=computer_control,
+    output=print,
+) -> int | None:
+    if "--simulate-fables-workflow" in argv and "--live-fables-workflow" in argv:
+        output("Richiesta rifiutata: simulazione e preflight live sono modalità separate.")
+        return 2
+
+    if "--simulate-fables-workflow" in argv:
+        from core.internal_workflow import (
+            format_workflow_summary,
+            simulate_fables_workflow,
+        )
+
+        workflow = simulate_fables_workflow()
+        output(format_workflow_summary(workflow))
+        output(f"Workflow ID: {workflow['id']}")
+        return 0 if workflow["status"] == "blocked" and workflow["cycles"] == 4 else 1
+
+    if "--live-fables-workflow" not in argv:
+        return None
+
+    import argparse
+
+    from core.fables_live import run_read_only_preflight
+    from core.internal_workflow import (
+        FABLES_WORLD_URL,
+        InternalWorkflowStore,
+        format_workflow_summary,
+    )
+
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--live-fables-workflow", action="store_true")
+    parser.add_argument("--confirm-live", action="store_true")
+    parser.add_argument("--world", default=FABLES_WORLD_URL)
+    parser.add_argument("--world-draft-id")
+    parser.add_argument("--forms-config")
+    parser.add_argument("--diagnose-accepted-request", action="store_true")
+    parser.add_argument("--request-page")
+    parser.add_argument("--request-id")
+    parser.add_argument("--accept-label")
+    args, _ = parser.parse_known_args(argv)
+    if not args.confirm_live:
+        output(
+            "Live non eseguito: specificare --confirm-live e confermare la frase "
+            "esatta a runtime."
+        )
+        return 2
+
+    if args.diagnose_accepted_request:
+        from core.fables_live_executor import (
+            FablesLiveExecutor,
+            select_world_url,
+        )
+
+        if not args.request_page or not args.request_id or not args.accept_label:
+            output(
+                "Diagnosi non eseguita: specificare --request-page, --request-id "
+                "e --accept-label verificato."
+            )
+            return 2
+        try:
+            expected_world_url = select_world_url((args.world,))
+        except ValueError as exc:
+            output(f"Diagnosi non eseguita: {exc}")
+            return 2
+        expected = (
+            "AUTORIZZO DIAGNOSI RICHIESTA FABLES "
+            f"{args.request_page.strip()} -> {expected_world_url} [{args.request_id.strip()}]"
+        )
+        try:
+            confirmation = input_fn(
+                f"Per autorizzare il click e la diagnosi, digitare esattamente: "
+                f"{expected}\n> "
+            ).strip()
+        except (EOFError, OSError):
+            output("Diagnosi non eseguita: conferma runtime non disponibile.")
+            return 2
+        try:
+            result = FablesLiveExecutor().diagnose_request_transition(
+                args.request_page,
+                expected_world_url,
+                args.request_id,
+                args.accept_label,
+                live_flag=args.live_fables_workflow,
+                confirm_live=args.confirm_live,
+                runtime_confirmation=confirmation,
+                browser_action=browser_action,
+                input_action=input_action,
+            )
+        except (ValueError, RuntimeError) as exc:
+            output(f"Diagnosi Fables bloccata: {exc}")
+            return 2
+        output(
+            f"Richiesta {result.request_state}; URL prima={result.before_url}; "
+            f"URL dopo={result.after_url}; causa={result.diagnosis.cause}; "
+            f"evidenze={len(result.diagnosis.evidence)}; "
+            f"diagnosi SQLite={result.diagnosis.id}"
+        )
+        return 0
+
+    if args.world_draft_id:
+        import json
+        from pathlib import Path
+
+        from agents.world_designer_agent import WorldDesignerAgent
+        from core.fables_live_executor import (
+            FablesFormMapping,
+            FablesLiveExecutor,
+        )
+
+        draft = WorldDesignerAgent().resume(args.world_draft_id)
+        if draft is None:
+            output(f"Live non eseguito: bozza mondo non trovata: {args.world_draft_id}")
+            return 2
+        mapping_path = Path(args.forms_config) if args.forms_config else (
+            BASE_DIR / "config" / "fables_forms.json"
+        )
+        if not mapping_path.is_absolute():
+            mapping_path = BASE_DIR / mapping_path
+        try:
+            raw_mappings = json.loads(mapping_path.read_text(encoding="utf-8"))
+            if not isinstance(raw_mappings, dict):
+                raise ValueError("Il file deve contenere un oggetto JSON.")
+            mappings = {
+                category: FablesFormMapping(**values)
+                for category, values in raw_mappings.items()
+                if isinstance(values, dict)
+            }
+        except (OSError, UnicodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
+            output(f"Live non eseguito: configurazione UI non valida ({mapping_path}): {exc}")
+            return 2
+
+        expected = f"AUTORIZZO ESECUZIONE FABLES {args.world}"
+        output(
+            "Questa modalità inserisce la bozza nel mondo reale. Aree, POI e 5e "
+            "Defaults restano esclusi. Le azioni già accettate non vengono ripetute."
+        )
+        try:
+            confirmation = input_fn(
+                f"Per autorizzare l'esecuzione, digitare esattamente: {expected}\n> "
+            ).strip()
+        except (EOFError, OSError):
+            output("Live non eseguito: conferma runtime non disponibile.")
+            return 2
+        try:
+            result = FablesLiveExecutor().execute(
+                draft.world,
+                args.world,
+                mappings,
+                live_flag=args.live_fables_workflow,
+                confirm_live=args.confirm_live,
+                runtime_confirmation=confirmation,
+                browser_action=browser_action,
+                input_action=input_action,
+            )
+        except (ValueError, RuntimeError) as exc:
+            output(f"Live Fables bloccato: {exc}")
+            return 2
+        output(
+            f"Workflow live {result.state}: {len(result.executions)} elementi verificati; "
+            f"{len(result.excluded)} categorie escluse."
+        )
+        if result.stop_reason:
+            output(f"Stop: {result.stop_reason}")
+        for execution in result.executions:
+            output(
+                f"{execution.element_id}: {execution.request_state}; "
+                f"diagnosi={execution.diagnosis.cause}; "
+                f"evidenze={len(execution.diagnosis.evidence)}"
+            )
+        return 0 if result.state == "completed" else 2
+
+    expected = f"AUTORIZZO SOLO ISPEZIONE FABLES {args.world}"
+    output(
+        "Questa modalità effettua soltanto navigazione e lettura visibile. "
+        "Non accetta richieste, non invoca agenti e non crea contenuti."
+    )
+    if input_fn(f"Per autorizzare, digitare: {expected}\n> ").strip() != expected:
+        output("Live non eseguito: conferma runtime assente o non corrispondente.")
+        return 2
+
+    store = InternalWorkflowStore()
+    workflow = run_read_only_preflight(store, args.world, browser_action)
+    output(format_workflow_summary(workflow))
+    output(f"Workflow ID: {workflow['id']}")
+    output(
+        "Live preflight registrato; richiesta non verificata. "
+        "Accettazione e popolamento non eseguiti."
+    )
+    return 0
+
+
 def main():
+    if "--copilot-handoff" in sys.argv[1:]:
+        from core.copilot_bridge import handle_copilot_handoff_cli
+
+        copilot_exit_code = handle_copilot_handoff_cli(
+            sys.argv[1:],
+            repo_root=BASE_DIR,
+        )
+        if copilot_exit_code is not None:
+            raise SystemExit(copilot_exit_code)
+
+    fables_exit_code = _handle_fables_cli(sys.argv[1:])
+    if fables_exit_code is not None:
+        raise SystemExit(fables_exit_code)
+
     ui = JarvisUI("face.png")
+    from core import actions_bridge
+    actions_bridge.set_ui(ui)
 
     def runner():
         ui.wait_for_api_key()
