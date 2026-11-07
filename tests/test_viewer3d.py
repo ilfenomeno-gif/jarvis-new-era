@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -9,7 +10,27 @@ from core.viewer3d import build_call
 
 # Real QtWebEngine pages crash natively (stack overflow/access violation) on the windows-latest runner once the
 # docked window is built; they pass locally, so CI skips them rather than reporting a runner-only crash.
-needs_local_gpu_stack = pytest.mark.skipif(bool(os.environ.get("CI")), reason="QtWebEngine crashes on the CI runner")
+needs_local_gpu_stack = pytest.mark.skipif(
+    bool(os.environ.get("CI"))
+    or os.environ.get("QT_QPA_PLATFORM", "").lower() == "offscreen",
+    reason="QtWebEngine requires a local display and GPU stack.",
+)
+
+
+@pytest.fixture(autouse=True)
+def close_qt_windows_after_test():
+    yield
+    from PyQt6.QtCore import QCoreApplication, QEvent
+    from PyQt6.QtWidgets import QApplication
+
+    app = QApplication.instance()
+    if app is None:
+        return
+    for window in app.topLevelWidgets():
+        window.close()
+        window.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    app.processEvents()
 
 
 def test_build_call_validates_and_serialises():
@@ -221,25 +242,20 @@ def test_fly_to_and_recon_bring_viewer_to_front():
     app = QApplication.instance() or QApplication(sys.argv)
     jarvis = ui_module.JarvisUI("")
     win = jarvis._win
-    assert win._hud_cam_stack.currentWidget() is win.hud
+    assert win._hud_cam_stack.currentWidget() is win._active_hud_widget()
 
     viewer_3d.viewer_3d({"mode": "fly_to", "lat": 1, "lon": 2}, player=jarvis)
     app.processEvents()
     assert win._hud_cam_stack.currentWidget() is win._viewer3d
 
     win.show_viewer3d(False)
-    assert win._hud_cam_stack.currentWidget() is win.hud
+    assert win._hud_cam_stack.currentWidget() is win._active_hud_widget()
     jarvis.apply_workspace("recon")
     app.processEvents()
     assert win._hud_cam_stack.currentWidget() is win._viewer3d
 
 
 @needs_local_gpu_stack
-@pytest.mark.pre_existing(reason="Il test importa save_screenshot, non esportato da core.viewer3d")
-@pytest.mark.xfail(
-    reason="Il test importa save_screenshot, non esportato da core.viewer3d",
-    strict=False,
-)
 def test_real_page_model_events_restore_viewer_and_report_load_errors():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PyQt6.QtWidgets import QApplication
@@ -257,11 +273,97 @@ def test_real_page_model_events_restore_viewer_and_report_load_errors():
     win._viewer3d_on_event(
         "commandError", {"command": "loadModel", "message": "model not found"}
     )
-    assert win._hud_cam_stack.currentWidget() is win.hud
+    assert win._hud_cam_stack.currentWidget() is win._active_hud_widget()
     assert win.hud._projection_status.startswith("MODEL LOAD FAILED")
 
     win._layout_timer.stop()
     win.close()
+
+
+def test_save_screenshot_validates_and_writes_png(tmp_path):
+    import base64
+    import struct
+    import zlib
+
+    from core.viewer3d import save_screenshot
+
+    def chunk(name, data):
+        body = name + data
+        return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body))
+
+    image = (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 6, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(b"\x00\x00\x00\x00\xff"))
+        + chunk(b"IEND", b"")
+    )
+    saved = save_screenshot(
+        "data:image/png;base64," + base64.b64encode(image).decode("ascii"),
+        output_dir=tmp_path,
+    )
+    assert saved.parent == tmp_path
+    assert saved.suffix == ".png"
+    assert saved.read_bytes() == image
+
+
+def test_save_screenshot_rejects_corrupt_png_chunks(tmp_path):
+    import base64
+    import struct
+    import zlib
+
+    from core.viewer3d import save_screenshot
+
+    def chunk(name, data):
+        body = name + data
+        return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body))
+
+    image = bytearray(
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 6, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(b"\x00\x00\x00\x00\xff"))
+        + chunk(b"IEND", b"")
+    )
+    image[-5] ^= 1
+    data_url = "data:image/png;base64," + base64.b64encode(image).decode("ascii")
+
+    with pytest.raises(ValueError, match="corrupt PNG chunk"):
+        save_screenshot(data_url, output_dir=tmp_path)
+
+
+@pytest.mark.parametrize(
+    "data_url",
+    [
+        "data:image/jpeg;base64,AAAA",
+        "data:image/png;base64,not base64",
+        "data:image/png;base64,QUJD",
+    ],
+)
+def test_save_screenshot_rejects_invalid_data_url(tmp_path, data_url):
+    from core.viewer3d import save_screenshot
+
+    with pytest.raises(ValueError):
+        save_screenshot(data_url, output_dir=tmp_path)
+
+
+def test_screenshot_event_completes_waiter_and_reports_saved_path(tmp_path, monkeypatch):
+    import threading
+    import core.viewer3d as viewer_core
+    import ui as ui_module
+
+    target = tmp_path / "capture.png"
+    monkeypatch.setattr(viewer_core, "save_screenshot", lambda _data: target)
+    shot = {"event": threading.Event(), "path": "", "error": ""}
+    window = SimpleNamespace(_viewer3d_shot=shot)
+
+    ui_module.MainWindow._viewer3d_on_event(
+        window, "screenshot", {"dataUrl": "data:image/png;base64,AAAA"}
+    )
+
+    assert shot["event"].is_set()
+    assert shot["path"] == str(target)
+    assert shot["error"] == ""
+
+
 def test_parse_states_and_fetch_with_fake_opener():
     import io, json
     from core import viewer3d as v

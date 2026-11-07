@@ -112,7 +112,10 @@ def test_layout_file_roundtrip_and_bad_files(tmp_path):
 def real_ui(tmp_path, monkeypatch):
     if os.environ.get("CI"):
         pytest.skip("QtWebEngine crashes on the CI runner")
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    if os.environ.get("QT_QPA_PLATFORM", "").lower() == "offscreen":
+        pytest.skip(
+            "Real QtWebEngine window tests require a local display, not Qt offscreen."
+        )
     monkeypatch.setenv("JARVIS_UI_LAYOUT", str(tmp_path / "ui_layout.json"))
     from PyQt6.QtWidgets import QApplication
     import ui as ui_module
