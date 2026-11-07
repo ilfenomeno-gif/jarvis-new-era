@@ -37,7 +37,7 @@ def test_widget_types_and_startup_event_queue():
     actions_bridge.clear()
 
 
-def test_terminal_computer_plugin_mounts_widgets_and_handlers():
+def test_terminal_computer_plugin_removes_legacy_overlays_and_keeps_handlers():
     from core.plugin_terminal_computer import install
 
     class FakeUI:
@@ -59,8 +59,8 @@ def test_terminal_computer_plugin_mounts_widgets_and_handlers():
     ui = FakeUI()
     actions_bridge.set_ui(ui)
     install(ui)
-    assert [entry[0][1] for entry in ui.specs] == ["terminal"]
-    assert ui.removed_widgets == ["computer_use"]
+    assert ui.specs == []
+    assert ui.removed_widgets == ["terminal", "computer_use"]
     actions_bridge.dispatch("terminal", "clear")
     assert ui.events[-1] == ("terminal", {"event": "clear"})
     with pytest.raises(KeyError, match="computer_use.pause"):
