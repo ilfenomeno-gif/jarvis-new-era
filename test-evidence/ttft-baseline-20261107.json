@@ -1,0 +1,722 @@
+{
+  "schema_version": 1,
+  "created_at_utc": "2026-11-07T21:46:01Z",
+  "benchmark": {
+    "name": "jarvis.ttft",
+    "kind": "live",
+    "unit": "ms",
+    "comparison_key": "qwen2.5:7b",
+    "parameters": {
+      "model": "qwen2.5:7b",
+      "repeats_per_prompt": 20,
+      "warmup_per_mode": 1
+    },
+    "environment": {
+      "platform": "Windows-11-10.0.26300-SP0",
+      "cpu": "Intel64 Family 6 Model 191 Stepping 2, GenuineIntel",
+      "logical_cpu_count": 16,
+      "ram_gb": 31.8,
+      "gpu": "NVIDIA GeForce RTX 4060, 8188 MiB, 610.88"
+    }
+  },
+  "metrics": {
+    "buffered.brief": {
+      "unit": "ms",
+      "samples": [
+        2119.9205,
+        1422.6829,
+        1491.3296,
+        1312.2085,
+        1182.9339,
+        1534.16,
+        1509.3002,
+        1369.7911,
+        1428.3434,
+        1491.7699,
+        1399.1874,
+        1496.8553,
+        1536.3925,
+        1294.8062,
+        1246.3281,
+        1389.0366,
+        1257.5847,
+        1265.6555,
+        1182.7158,
+        1303.1606
+      ],
+      "median": 1394.112
+    },
+    "buffered.short": {
+      "unit": "ms",
+      "samples": [
+        3038.0186,
+        2466.4388,
+        2465.0179,
+        2362.3992,
+        2278.1408,
+        2181.2219,
+        2380.4343,
+        2616.232,
+        2141.1967,
+        2024.0793,
+        2292.7773,
+        2423.5301,
+        1975.2714,
+        2140.6387,
+        2439.1568,
+        2353.4598,
+        2316.8062,
+        2220.5099,
+        2487.3014,
+        1900.9055
+      ],
+      "median": 2335.133
+    },
+    "buffered.medium": {
+      "unit": "ms",
+      "samples": [
+        4132.743,
+        2911.1542,
+        2360.5319,
+        2614.1858,
+        3158.2119,
+        3299.0501,
+        2672.0843,
+        2352.395,
+        2786.9262,
+        2030.107,
+        2525.3705,
+        2424.9591,
+        2609.4641,
+        2525.2152,
+        2001.0276,
+        2675.0835,
+        3152.148,
+        2166.8385,
+        2450.2442,
+        2324.6849
+      ],
+      "median": 2567.4173
+    },
+    "buffered.multi_step": {
+      "unit": "ms",
+      "samples": [
+        4593.0616,
+        2857.077,
+        3616.0517,
+        3057.7529,
+        3200.4263,
+        2645.547,
+        2513.0437,
+        2685.9371,
+        3097.1127,
+        3111.3233,
+        3104.9311,
+        3195.0543,
+        3187.1004,
+        3023.1373,
+        2708.7602,
+        2330.6854,
+        2907.0682,
+        2495.7262,
+        3177.8796,
+        2865.7745
+      ],
+      "median": 3040.4451
+    },
+    "buffered.long": {
+      "unit": "ms",
+      "samples": [
+        9567.1909,
+        9513.4001,
+        8846.4519,
+        7751.4377,
+        8862.5966,
+        5232.0527,
+        7661.9421,
+        7901.963,
+        8200.3059,
+        7976.9677,
+        8799.622,
+        7810.3974,
+        7823.3139,
+        7279.8041,
+        8199.4182,
+        7572.3734,
+        6226.4038,
+        6837.9832,
+        7649.775,
+        6948.5012
+      ],
+      "median": 7816.8556499999995
+    },
+    "stream.brief": {
+      "unit": "ms",
+      "samples": [
+        338.2672,
+        301.136,
+        281.5962,
+        314.124,
+        338.7338,
+        294.8539,
+        289.9684,
+        308.0217,
+        277.4384,
+        279.7486,
+        323.7351,
+        329.725,
+        315.2099,
+        287.7466,
+        282.2687,
+        276.4889,
+        285.7152,
+        311.4587,
+        282.2025,
+        287.1136
+      ],
+      "median": 292.41115
+    },
+    "stream.short": {
+      "unit": "ms",
+      "samples": [
+        351.636,
+        278.8341,
+        279.1301,
+        307.0876,
+        296.8396,
+        276.9389,
+        293.0658,
+        262.0118,
+        270.8295,
+        291.2095,
+        264.8133,
+        265.0849,
+        295.0328,
+        278.3865,
+        275.1699,
+        273.2444,
+        287.0217,
+        273.4231,
+        300.6451,
+        317.2205
+      ],
+      "median": 278.9821
+    },
+    "stream.medium": {
+      "unit": "ms",
+      "samples": [
+        328.9987,
+        262.1911,
+        283.044,
+        280.355,
+        262.083,
+        275.3298,
+        297.7904,
+        296.8389,
+        266.8962,
+        298.9503,
+        276.1411,
+        285.7475,
+        279.2966,
+        270.3836,
+        277.1783,
+        275.7751,
+        289.4286,
+        275.9987,
+        326.5781,
+        319.4158
+      ],
+      "median": 279.8258
+    },
+    "stream.multi_step": {
+      "unit": "ms",
+      "samples": [
+        339.2212,
+        267.5586,
+        260.7263,
+        300.5973,
+        283.7565,
+        376.2691,
+        318.3195,
+        291.5198,
+        328.0599,
+        328.8503,
+        332.3155,
+        306.4979,
+        300.6967,
+        310.5687,
+        298.0226,
+        341.2165,
+        270.3602,
+        289.0616,
+        282.0451,
+        276.9225
+      ],
+      "median": 300.64700000000005
+    },
+    "stream.long": {
+      "unit": "ms",
+      "samples": [
+        327.8967,
+        269.978,
+        281.5603,
+        304.8208,
+        278.3622,
+        283.6187,
+        299.8466,
+        278.169,
+        270.1795,
+        274.8927,
+        282.7481,
+        325.7426,
+        329.929,
+        318.2494,
+        331.9545,
+        340.4263,
+        294.3636,
+        309.945,
+        265.8425,
+        293.2468
+      ],
+      "median": 293.8052
+    }
+  },
+  "details": {
+    "schema_version": 1,
+    "created_at_utc": "2026-11-07T21:46:01Z",
+    "benchmark": {
+      "path": "core.brain_router.BrainRouter.stream_chat",
+      "prompt_count": 5,
+      "repetitions_per_prompt_per_mode": 20,
+      "warmup_per_mode": 1,
+      "run_processes": "separate subprocess for each stream flag value"
+    },
+    "ollama": {
+      "ollama_url": "http://127.0.0.1:11434",
+      "ollama_version": "0.40.15",
+      "model": "qwen2.5:7b",
+      "model_digest": "845dbda0ea48ed749caafd9e6037047aa19acfcfd82e704d7ca97d631a0b697e",
+      "model_size_bytes": 4683087332,
+      "model_details": {
+        "parent_model": "",
+        "format": "gguf",
+        "family": "qwen2",
+        "families": [
+          "qwen2"
+        ],
+        "parameter_size": "7.6B",
+        "quantization_level": "Q4_K_M"
+      },
+      "model_parameters": {
+        "parameter_overrides": [],
+        "note": "No PARAMETER overrides were returned by /api/show; Ollama runtime defaults apply."
+      },
+      "generation_parameters": {
+        "stream": true,
+        "tools": null,
+        "options": null,
+        "temperature": "not specified; Ollama/model default",
+        "num_predict": "not specified; Ollama/model default",
+        "note": "BrainRouter sends no per-request options; Ollama and model defaults apply."
+      },
+      "hardware": {
+        "platform": "Windows-11-10.0.26300-SP0",
+        "cpu": "Intel64 Family 6 Model 191 Stepping 2, GenuineIntel",
+        "logical_cpu_count": 16,
+        "ram_gb": 31.8,
+        "gpu": "NVIDIA GeForce RTX 4060, 8188 MiB, 610.88"
+      }
+    },
+    "modes": {
+      "buffered": {
+        "mode": "buffered",
+        "stream_flag": "0",
+        "model": "qwen2.5:7b",
+        "warmup_requests_excluded": 1,
+        "prompts": {
+          "brief": {
+            "prompt_characters": 83,
+            "samples_ms": [
+              2119.9205,
+              1422.6829,
+              1491.3296,
+              1312.2085,
+              1182.9339,
+              1534.16,
+              1509.3002,
+              1369.7911,
+              1428.3434,
+              1491.7699,
+              1399.1874,
+              1496.8553,
+              1536.3925,
+              1294.8062,
+              1246.3281,
+              1389.0366,
+              1257.5847,
+              1265.6555,
+              1182.7158,
+              1303.1606
+            ],
+            "distribution": {
+              "sample_count": 20,
+              "p50_ms": 1389.037,
+              "p95_ms": 1536.392,
+              "p99_ms": 2119.921,
+              "max_ms": 2119.921,
+              "stddev_ms": 197.106
+            },
+            "p95_reliability": "at least 20 samples; p95 is more informative but still workload-specific"
+          },
+          "short": {
+            "prompt_characters": 105,
+            "samples_ms": [
+              3038.0186,
+              2466.4388,
+              2465.0179,
+              2362.3992,
+              2278.1408,
+              2181.2219,
+              2380.4343,
+              2616.232,
+              2141.1967,
+              2024.0793,
+              2292.7773,
+              2423.5301,
+              1975.2714,
+              2140.6387,
+              2439.1568,
+              2353.4598,
+              2316.8062,
+              2220.5099,
+              2487.3014,
+              1900.9055
+            ],
+            "distribution": {
+              "sample_count": 20,
+              "p50_ms": 2316.806,
+              "p95_ms": 2616.232,
+              "p99_ms": 3038.019,
+              "max_ms": 3038.019,
+              "stddev_ms": 243.163
+            },
+            "p95_reliability": "at least 20 samples; p95 is more informative but still workload-specific"
+          },
+          "medium": {
+            "prompt_characters": 215,
+            "samples_ms": [
+              4132.743,
+              2911.1542,
+              2360.5319,
+              2614.1858,
+              3158.2119,
+              3299.0501,
+              2672.0843,
+              2352.395,
+              2786.9262,
+              2030.107,
+              2525.3705,
+              2424.9591,
+              2609.4641,
+              2525.2152,
+              2001.0276,
+              2675.0835,
+              3152.148,
+              2166.8385,
+              2450.2442,
+              2324.6849
+            ],
+            "distribution": {
+              "sample_count": 20,
+              "p50_ms": 2525.37,
+              "p95_ms": 3299.05,
+              "p99_ms": 4132.743,
+              "max_ms": 4132.743,
+              "stddev_ms": 482.62
+            },
+            "p95_reliability": "at least 20 samples; p95 is more informative but still workload-specific"
+          },
+          "multi_step": {
+            "prompt_characters": 260,
+            "samples_ms": [
+              4593.0616,
+              2857.077,
+              3616.0517,
+              3057.7529,
+              3200.4263,
+              2645.547,
+              2513.0437,
+              2685.9371,
+              3097.1127,
+              3111.3233,
+              3104.9311,
+              3195.0543,
+              3187.1004,
+              3023.1373,
+              2708.7602,
+              2330.6854,
+              2907.0682,
+              2495.7262,
+              3177.8796,
+              2865.7745
+            ],
+            "distribution": {
+              "sample_count": 20,
+              "p50_ms": 3023.137,
+              "p95_ms": 3616.052,
+              "p99_ms": 4593.062,
+              "max_ms": 4593.062,
+              "stddev_ms": 468.377
+            },
+            "p95_reliability": "at least 20 samples; p95 is more informative but still workload-specific"
+          },
+          "long": {
+            "prompt_characters": 314,
+            "samples_ms": [
+              9567.1909,
+              9513.4001,
+              8846.4519,
+              7751.4377,
+              8862.5966,
+              5232.0527,
+              7661.9421,
+              7901.963,
+              8200.3059,
+              7976.9677,
+              8799.622,
+              7810.3974,
+              7823.3139,
+              7279.8041,
+              8199.4182,
+              7572.3734,
+              6226.4038,
+              6837.9832,
+              7649.775,
+              6948.5012
+            ],
+            "distribution": {
+              "sample_count": 20,
+              "p50_ms": 7810.397,
+              "p95_ms": 9513.4,
+              "p99_ms": 9567.191,
+              "max_ms": 9567.191,
+              "stddev_ms": 1017.591
+            },
+            "p95_reliability": "at least 20 samples; p95 is more informative but still workload-specific"
+          }
+        },
+        "all_prompt_samples": {
+          "sample_count": 100,
+          "p50_ms": 2525.215,
+          "p95_ms": 8200.306,
+          "p99_ms": 9513.4,
+          "max_ms": 9567.191,
+          "stddev_ms": 2325.058
+        },
+        "p95_reliability": "at least 20 samples; p95 is more informative but still workload-specific",
+        "measurement_boundary": "Stream mode: first non-empty BrainRouter content event. Buffered mode: the time when the full BrainRouter event iterator has completed. Both consume the complete response; HUD/browser paint is not measured."
+      },
+      "stream": {
+        "mode": "stream",
+        "stream_flag": "1",
+        "model": "qwen2.5:7b",
+        "warmup_requests_excluded": 1,
+        "prompts": {
+          "brief": {
+            "prompt_characters": 83,
+            "samples_ms": [
+              338.2672,
+              301.136,
+              281.5962,
+              314.124,
+              338.7338,
+              294.8539,
+              289.9684,
+              308.0217,
+              277.4384,
+              279.7486,
+              323.7351,
+              329.725,
+              315.2099,
+              287.7466,
+              282.2687,
+              276.4889,
+              285.7152,
+              311.4587,
+              282.2025,
+              287.1136
+            ],
+            "distribution": {
+              "sample_count": 20,
+              "p50_ms": 289.968,
+              "p95_ms": 338.267,
+              "p99_ms": 338.734,
+              "max_ms": 338.734,
+              "stddev_ms": 20.158
+            },
+            "p95_reliability": "at least 20 samples; p95 is more informative but still workload-specific"
+          },
+          "short": {
+            "prompt_characters": 105,
+            "samples_ms": [
+              351.636,
+              278.8341,
+              279.1301,
+              307.0876,
+              296.8396,
+              276.9389,
+              293.0658,
+              262.0118,
+              270.8295,
+              291.2095,
+              264.8133,
+              265.0849,
+              295.0328,
+              278.3865,
+              275.1699,
+              273.2444,
+              287.0217,
+              273.4231,
+              300.6451,
+              317.2205
+            ],
+            "distribution": {
+              "sample_count": 20,
+              "p50_ms": 278.834,
+              "p95_ms": 317.221,
+              "p99_ms": 351.636,
+              "max_ms": 351.636,
+              "stddev_ms": 20.703
+            },
+            "p95_reliability": "at least 20 samples; p95 is more informative but still workload-specific"
+          },
+          "medium": {
+            "prompt_characters": 215,
+            "samples_ms": [
+              328.9987,
+              262.1911,
+              283.044,
+              280.355,
+              262.083,
+              275.3298,
+              297.7904,
+              296.8389,
+              266.8962,
+              298.9503,
+              276.1411,
+              285.7475,
+              279.2966,
+              270.3836,
+              277.1783,
+              275.7751,
+              289.4286,
+              275.9987,
+              326.5781,
+              319.4158
+            ],
+            "distribution": {
+              "sample_count": 20,
+              "p50_ms": 279.297,
+              "p95_ms": 326.578,
+              "p99_ms": 328.999,
+              "max_ms": 328.999,
+              "stddev_ms": 19.198
+            },
+            "p95_reliability": "at least 20 samples; p95 is more informative but still workload-specific"
+          },
+          "multi_step": {
+            "prompt_characters": 260,
+            "samples_ms": [
+              339.2212,
+              267.5586,
+              260.7263,
+              300.5973,
+              283.7565,
+              376.2691,
+              318.3195,
+              291.5198,
+              328.0599,
+              328.8503,
+              332.3155,
+              306.4979,
+              300.6967,
+              310.5687,
+              298.0226,
+              341.2165,
+              270.3602,
+              289.0616,
+              282.0451,
+              276.9225
+            ],
+            "distribution": {
+              "sample_count": 20,
+              "p50_ms": 300.597,
+              "p95_ms": 341.216,
+              "p99_ms": 376.269,
+              "max_ms": 376.269,
+              "stddev_ms": 28.697
+            },
+            "p95_reliability": "at least 20 samples; p95 is more informative but still workload-specific"
+          },
+          "long": {
+            "prompt_characters": 314,
+            "samples_ms": [
+              327.8967,
+              269.978,
+              281.5603,
+              304.8208,
+              278.3622,
+              283.6187,
+              299.8466,
+              278.169,
+              270.1795,
+              274.8927,
+              282.7481,
+              325.7426,
+              329.929,
+              318.2494,
+              331.9545,
+              340.4263,
+              294.3636,
+              309.945,
+              265.8425,
+              293.2468
+            ],
+            "distribution": {
+              "sample_count": 20,
+              "p50_ms": 293.247,
+              "p95_ms": 331.954,
+              "p99_ms": 340.426,
+              "max_ms": 340.426,
+              "stddev_ms": 23.335
+            },
+            "p95_reliability": "at least 20 samples; p95 is more informative but still workload-specific"
+          }
+        },
+        "all_prompt_samples": {
+          "sample_count": 100,
+          "p50_ms": 289.062,
+          "p95_ms": 338.734,
+          "p99_ms": 351.636,
+          "max_ms": 376.269,
+          "stddev_ms": 23.876
+        },
+        "p95_reliability": "at least 20 samples; p95 is more informative but still workload-specific",
+        "measurement_boundary": "Stream mode: first non-empty BrainRouter content event. Buffered mode: the time when the full BrainRouter event iterator has completed. Both consume the complete response; HUD/browser paint is not measured."
+      }
+    },
+    "limitations": [
+      "This is live local Ollama output, not a mock.",
+      "The measured visibility boundary is the application-facing content event, not browser paint.",
+      "Each prompt starts a fresh conversation with the current JARVIS system prompt.",
+      "No tool declarations or prior chat history are included.",
+      "Warm-up is excluded; results describe steady-state rather than cold model load.",
+      "Per-prompt p95 and p99 use only the configured repeat count; treat tail percentiles as indicative, not stable, below 50 samples."
+    ]
+  },
+  "metric_semantics": {
+    "stream.*": "Elapsed time to the first non-empty content event emitted by BrainRouter; does not measure HUD or browser rendering.",
+    "buffered.*": "Elapsed time until BrainRouter completes the full response; completion latency, not time to first token.",
+    "details.modes.*.all_prompt_samples": "Aggregate distribution across prompts; its latency meaning follows the corresponding mode (first content for stream, full completion for buffered)."
+  }
+}
