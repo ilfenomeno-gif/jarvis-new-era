@@ -81,7 +81,8 @@ from actions.background_monitor import (
 )
 from actions.web_search        import _news as _fetch_news_sync
 from memory.config_manager     import (
-    get_voice, get_input_device, get_output_device,
+    get_jarvis_voice, get_iris_voice,
+    get_input_device, get_output_device,
 )
 from core.plugin_loader        import discover_plugins
 from core.action_loader        import discover_actions
@@ -285,7 +286,9 @@ TOOL_DECLARATIONS = [
         "name": "open_website",
         "description": (
             "Opens a website inside Jarvis's integrated browser. Use for website "
-            "names such as YouTube or an HTTP(S) URL; do not launch an external browser."
+            "names such as YouTube or an HTTP(S) URL; when the user only asks to open "
+            "YouTube, use this tool with https://www.youtube.com. Do not launch an "
+            "external browser."
         ),
         "parameters": {
             "type": "OBJECT",
@@ -369,10 +372,11 @@ TOOL_DECLARATIONS = [
     {
         "name": "youtube_video",
         "description": (
-            "Controls YouTube. Use for: playing videos, summarizing a video's content, "
-                "getting video info, or showing trending videos. For a specific request, "
-                "always search and play the first relevant result; never open only youtube.com. "
-                "If playback fails, return the targeted search URL."
+            "Use only for YouTube media actions: playing or searching for videos, "
+            "summarizing a video's content, getting video info, or showing trending "
+            "videos. If the user only asks to open YouTube itself, use open_website "
+            "instead. For a playback request, search and play the first relevant "
+            "result. If playback fails, return the targeted search URL."
         ),
         "parameters": {
             "type": "OBJECT",
@@ -1003,6 +1007,7 @@ class JarvisLive:
         )
         self._reconnect_event: asyncio.Event | None = None
         self._reconnect_keep = True   # False → next rebuild drops the resumption handle
+        self._iris_voice_active = False
 
         # ── Session resumption ─────────────────────────────────────────
         # The server issues a resumption handle every few seconds and reissues
@@ -1138,6 +1143,7 @@ class JarvisLive:
         self._hud.on_message = self._on_hud_message
         self._hud.on_plugin = self._on_hud_plugin_toggle
         self._hud.on_system = self.ui.system_action   # SISTEMA tab → UI actions
+        self._hud.on_iris_visibility = self._on_hud_iris_visibility
         # Let tools drive the HUD 3D map (open_system, tour, run scenario, …).
         self.ui.hud_command = self._hud.command
         set_ui_state = self.ui.set_state
@@ -1476,6 +1482,7 @@ class JarvisLive:
         return None
 
     def _set_hud_humanoid_visible(self, visible: bool) -> None:
+        self._set_iris_voice_mode(visible)
         try:
             self._hud.command("reveal", on=visible)
         except Exception as exc:
@@ -1485,8 +1492,23 @@ class JarvisLive:
 
         message = "Iris è attiva nella HUD." if visible else "Iris nascosta; mappa 3D attiva."
         self.ui.write_log(f"SYS: {message}")
-        if visible and self.session:
-            self.speak("Iris, eccomi.")
+
+    def _set_iris_voice_mode(self, visible: bool) -> None:
+        if getattr(self, "_iris_voice_active", False) == visible:
+            return
+        self._iris_voice_active = visible
+        self.request_reconnect(
+            keep_context=False,
+            reason="Iris feminine voice" if visible else "Jarvis masculine voice",
+        )
+
+    def _on_hud_iris_visibility(self, visible: bool) -> None:
+        self._set_iris_voice_mode(visible)
+
+    def _speech_voice_name(self) -> str:
+        if getattr(self, "_iris_voice_active", False):
+            return get_iris_voice()
+        return get_jarvis_voice()
 
     def _on_text_command(self, text: str, *, from_hud: bool = False):
         if not from_hud:
@@ -2471,6 +2493,7 @@ class JarvisLive:
         engine.auto_turn = not getattr(self, "_ptt_enabled", False)
         self._engine = engine
         try:
+            await engine.warmup()
             yield engine
         finally:
             self._engine = None
@@ -2550,7 +2573,7 @@ class JarvisLive:
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
                     prebuilt_voice_config=types.PrebuiltVoiceConfig(
-                        voice_name=get_voice()
+                        voice_name=self._speech_voice_name()
                     )
                 )
             ),
@@ -3639,7 +3662,7 @@ class JarvisLive:
                         for fc in response.tool_call.function_calls:
                             print(f"[JARVIS] 📞 {fc.name}")
                             self._tools_used.add(fc.name)
-                            fr = await self._execute_tool(fc)
+                            fr = await self._execute_voice_tool(fc)
                             fn_responses.append(fr)
                         await self.session.send_tool_response(
                             function_responses=fn_responses
@@ -3648,6 +3671,20 @@ class JarvisLive:
             print(f"[JARVIS] ❌ Recv: {e}")
             traceback.print_exc()
             raise
+
+    async def _execute_voice_tool(self, fc):
+        from opentelemetry import trace
+        from core.telemetry import record_span_error
+
+        with trace.get_tracer("jarvis.voice").start_as_current_span(
+            "voice.tool"
+        ) as span:
+            span.set_attribute("tool.name", str(getattr(fc, "name", "")))
+            try:
+                return await self._execute_tool(fc)
+            except Exception as error:
+                record_span_error(span, error)
+                raise
 
     async def _play_audio(self):
         print("[JARVIS] 🔊 Play started")
@@ -3668,6 +3705,13 @@ class JarvisLive:
             st.start()
             return st
 
+        def _close_spk(st):
+            for operation in ("stop", "close"):
+                try:
+                    getattr(st, operation)()
+                except sd.PortAudioError as exc:
+                    print(f"[JARVIS] ⚠️ Audio stream {operation} failed: {exc}")
+
         try:
             stream = _open_spk(_spk_dev)
         except Exception as _e:
@@ -3679,6 +3723,7 @@ class JarvisLive:
             print(f"[JARVIS] ⚠️  Output device '{_spk_name}' failed: {_e} — using default")
             self.ui.write_log(f"SYS: Speaker '{_spk_name}' unavailable — using system default.")
             stream = _open_spk(None)
+            _spk_dev = None
 
         try:
             while True:
@@ -3709,6 +3754,9 @@ class JarvisLive:
                     except asyncio.QueueEmpty:
                         break
 
+                if stream is None:
+                    continue
+
                 # Drive the HUD waveform from JARVIS's own voice while speaking.
                 if not self._page_reader_audio_active.is_set():
                     level = _pcm_level(
@@ -3731,6 +3779,40 @@ class JarvisLive:
                             _pcm_level(output_pcm),
                         )
                     await asyncio.to_thread(stream.write, bytes(batch))
+                except sd.PortAudioError as exc:
+                    failed_device = _spk_dev
+                    _close_spk(stream)
+                    stream = None
+                    if failed_device is not None:
+                        try:
+                            stream = _open_spk(None)
+                            await asyncio.to_thread(stream.write, bytes(batch))
+                        except sd.PortAudioError as fallback_exc:
+                            if stream is not None:
+                                _close_spk(stream)
+                                stream = None
+                            self.ui.write_log(
+                                "ERR: Audio output unavailable; continuing without "
+                                f"voice playback ({fallback_exc})."
+                            )
+                            print(
+                                f"[JARVIS] ❌ Audio output unavailable: "
+                                f"{fallback_exc}"
+                            )
+                            self.set_speaking(False)
+                        else:
+                            _spk_dev = None
+                            self.ui.write_log(
+                                "SYS: Selected speaker failed; switched to the "
+                                "system default output."
+                            )
+                    else:
+                        self.ui.write_log(
+                            "ERR: Audio output unavailable; continuing without "
+                            f"voice playback ({exc})."
+                        )
+                        print(f"[JARVIS] ❌ Audio output unavailable: {exc}")
+                        self.set_speaking(False)
                 except (RuntimeError, asyncio.CancelledError):
                     break   # executor shutting down — exit cleanly
         except Exception as e:
@@ -3738,8 +3820,8 @@ class JarvisLive:
             raise
         finally:
             self.set_speaking(False)
-            stream.stop()
-            stream.close()
+            if stream is not None:
+                _close_spk(stream)
 
     # ── Session memory ──────────────────────────────────────────────────────────
 
@@ -4418,7 +4500,38 @@ def _handle_fables_cli(
     return 0
 
 
-def main():
+def main(argv=None):
+    import argparse
+
+    from core.logging_config import configure_logging
+
+    configure_logging()
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--hud-port", type=int)
+    parser.add_argument("--startup-smoke", action="store_true")
+    runtime_options, _remaining_args = parser.parse_known_args(
+        sys.argv[1:] if argv is None else argv
+    )
+    if runtime_options.hud_port is not None:
+        if not 0 <= runtime_options.hud_port <= 65535:
+            parser.error("--hud-port must be between 0 and 65535.")
+        os.environ["JARVIS_HUD_PORT"] = str(runtime_options.hud_port)
+
+    if runtime_options.startup_smoke:
+        from PyQt6.QtCore import QTimer
+
+        ui = JarvisUI("face.png")
+        hud = HudBridge()
+        try:
+            hud.start(window="none")
+            ui.show_hud_browser(hud.url)
+            print(f"JARVIS_STARTUP_READY {hud.url}", flush=True)
+            QTimer.singleShot(15_000, ui._app.quit)
+            ui.root.mainloop()
+            return
+        finally:
+            hud.stop()
+
     if "--copilot-handoff" in sys.argv[1:]:
         from core.copilot_bridge import handle_copilot_handoff_cli
 
