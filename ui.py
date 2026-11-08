@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import atexit
 import json
 import logging
@@ -33,7 +34,7 @@ from PyQt6.QtGui import (
 from PyQt6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QDockWidget, QFileDialog, QFrame,
     QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QPushButton,
-    QScrollArea, QSizePolicy, QSplitter, QStackedWidget, QTextEdit,
+    QScrollArea, QSizePolicy, QSplitter, QStackedWidget, QTabWidget, QTextEdit,
     QVBoxLayout, QWidget, QProgressBar,
 )
 from PyQt6.QtTest import QTest
@@ -3174,6 +3175,8 @@ class MainWindow(QMainWindow):
     _gemini_chat_sig  = pyqtSignal()
     _streaming_play_confirm_sig = pyqtSignal(str, object)
     _browser_open_sig = pyqtSignal(str)
+    _task_browser_open_sig = pyqtSignal(str, str, object)
+    _task_browser_close_sig = pyqtSignal(str)
     _browser_close_sig = pyqtSignal()
     _browser_key_sig = pyqtSignal(str)
     _browser_click_sig = pyqtSignal(str)
@@ -3204,6 +3207,14 @@ class MainWindow(QMainWindow):
         self._gemini_chat_window: GeminiChatWindow | None = None
         self._gemini_chat_panel: GeminiChatPanel | None = None
         self._gemini_previous_widget: QWidget | None = None
+        self._task_browser_dialog: QDialog | None = None
+        self._task_browser_tabs: QTabWidget | None = None
+        self._task_browser_views: list[QWebEngineView] = []
+        self._task_browser_active: dict[str, QWebEngineView] = {}
+        self._task_browser_view_tasks: dict[QWebEngineView, str] = {}
+        self._task_browser_futures: dict[
+            str, tuple[asyncio.AbstractEventLoop, asyncio.Future[str]]
+        ] = {}
         self._gev_view_state = {
             "camera": {
                 "lat": 0,
@@ -3470,6 +3481,8 @@ class MainWindow(QMainWindow):
             self._confirm_streaming_play_on_ui_thread
         )
         self._browser_open_sig.connect(self._open_url_in_webview)
+        self._task_browser_open_sig.connect(self._open_task_browser)
+        self._task_browser_close_sig.connect(self._cancel_task_browser)
         self._browser_close_sig.connect(self.close_browser)
         self._focus_mode_sig.connect(self.set_focus_mode)
         self._workspace_sig.connect(self.apply_workspace)
@@ -4222,6 +4235,123 @@ class MainWindow(QMainWindow):
         self._browser_view.setUrl(QUrl(normalized_url))
         self._browser_status.setText("Loading…")
         self._update_browser_navigation()
+
+    def _open_task_browser(
+        self,
+        task_id: str,
+        url: str,
+        request: tuple[asyncio.AbstractEventLoop, asyncio.Future[str]],
+    ) -> None:
+        loop, future = request
+        self._task_browser_futures[task_id] = (loop, future)
+        try:
+            normalized_url = normalize_http_url(url)
+            if task_id in self._task_browser_active:
+                raise RuntimeError(f"Task {task_id} already has an active browser")
+            dialog = self._task_browser_dialog
+            if dialog is None:
+                dialog = QDialog(self)
+                dialog.setWindowTitle("JARVIS Task Browsers")
+                dialog.resize(1000, 700)
+                layout = QVBoxLayout(dialog)
+                self._task_browser_tabs = QTabWidget(dialog)
+                layout.addWidget(self._task_browser_tabs)
+                self._task_browser_dialog = dialog
+            tabs = self._task_browser_tabs
+            if tabs is None:
+                raise RuntimeError("Task browser tabs are unavailable")
+
+            view = next(
+                (
+                    candidate
+                    for candidate in self._task_browser_views
+                    if candidate not in self._task_browser_view_tasks
+                ),
+                None,
+            )
+            if view is None:
+                view = QWebEngineView()
+                view.setPage(
+                    _SafeBrowserPage(
+                        view,
+                        lambda: self._log_sig.emit(
+                            "Task browser: navigazione non HTTP(S) bloccata"
+                        ),
+                    )
+                )
+                view.loadFinished.connect(
+                    lambda succeeded, current_view=view: (
+                        self._on_task_browser_load_finished(current_view, succeeded)
+                    )
+                )
+                self._task_browser_views.append(view)
+                tabs.addTab(view, "Task")
+
+            self._task_browser_active[task_id] = view
+            self._task_browser_view_tasks[view] = task_id
+            tabs.setTabText(tabs.indexOf(view), task_id[:8])
+            tabs.setCurrentWidget(view)
+            dialog.show()
+            dialog.raise_()
+            dialog.activateWindow()
+            view.setUrl(QUrl(normalized_url))
+        except Exception as exc:
+            self._finish_task_browser(task_id, error=exc)
+
+    def _on_task_browser_load_finished(
+        self, view: QWebEngineView, succeeded: bool
+    ) -> None:
+        task_id = self._task_browser_view_tasks.get(view)
+        if task_id is None:
+            return
+        if not succeeded:
+            self._finish_task_browser(
+                task_id, error=RuntimeError("Embedded browser page load failed")
+            )
+            return
+        view.page().toPlainText(
+            lambda text: self._finish_task_browser(task_id, text=text)
+        )
+
+    def _finish_task_browser(
+        self,
+        task_id: str,
+        *,
+        text: object = None,
+        error: BaseException | None = None,
+        cancelled: bool = False,
+    ) -> None:
+        view = self._task_browser_active.pop(task_id, None)
+        if view is not None:
+            self._task_browser_view_tasks.pop(view, None)
+        request = self._task_browser_futures.pop(task_id, None)
+        if request is None:
+            return
+        loop, future = request
+        if not isinstance(text, str) and error is None and not cancelled:
+            error = RuntimeError("Embedded browser returned invalid page text")
+        result_text = text if isinstance(text, str) else ""
+
+        def resolve() -> None:
+            if future.done():
+                return
+            if cancelled:
+                future.cancel()
+            elif error is not None:
+                future.set_exception(error)
+            else:
+                future.set_result(result_text[:20_000])
+
+        try:
+            loop.call_soon_threadsafe(resolve)
+        except RuntimeError as exc:
+            self._log_sig.emit(f"Task browser: risposta al worker non riuscita: {exc}")
+
+    def _cancel_task_browser(self, task_id: str) -> None:
+        view = self._task_browser_active.get(task_id)
+        if view is not None:
+            view.stop()
+        self._finish_task_browser(task_id, cancelled=True)
 
     def _browser_panel_is_active(self) -> bool:
         return (
@@ -6494,6 +6624,18 @@ class JarvisUI:
         normalized_url = normalize_http_url(url)
         self._win._browser_open_sig.emit(normalized_url)
         return normalized_url
+
+    async def open_task_browser_and_read(
+        self, task_id: str, url: str
+    ) -> str:
+        loop = asyncio.get_running_loop()
+        future: asyncio.Future[str] = loop.create_future()
+        self._win._task_browser_open_sig.emit(task_id, url, (loop, future))
+        try:
+            return await future
+        except asyncio.CancelledError:
+            self._win._task_browser_close_sig.emit(task_id)
+            raise
 
     def press_key_in_webview(self, key: str) -> str:
         normalized_key = normalize_web_key(key)

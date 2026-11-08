@@ -370,6 +370,43 @@ Entrambi i flussi mostrano un riepilogo e richiedono conferma. Questa fase
 registra soltanto il pacchetto: non invia nulla a Copilot. La registrazione è
 idempotente per task, hash del prompt e insieme degli hash degli allegati.
 
+## Background Tasks and Workers
+
+JARVIS supports asynchronous task delegation via `delegate_task`.
+Workers are currently registered at startup in `main.py`:
+
+- `writer` — generates text (LLM) and saves to
+  `~/Desktop/JARVIS Tasks/`. Timeout 300s, tools: `write_file`.
+- `browser` — opens URLs in the embedded browser panel.
+  Timeout 180s, tools: `embedded_browser`, `read_page`.
+
+Worker configuration (system prompt, timeout, tools allowlist)
+is defined in the respective worker classes
+(`core/task_worker_impl.py`). To add a new role, register a new
+worker class in `main.py` at startup.
+
+Note: a `config/task_roles.json` mechanism is not implemented.
+If needed, it can be added by extending the registration logic
+in `main.py` to read a JSON file at startup.
+
+Only the main session speaks; completion notifications wait until JARVIS is
+idle and group nearby completions. The `writer` uses an isolated Gemini call.
+The `browser` returns readable page text; at most two embedded task browsers
+run concurrently, with additional requests opened in the external browser.
+Task indicators in the HUD show status and progress and open the full result.
+Cancellation is cooperative and does not roll back completed writes.
+
+Task state (including prompts and results) is stored as unencrypted local JSON
+at `%USERPROFILE%\.jarvis-vii\tasks.json`; do not share it if it contains
+sensitive data. Tasks still `running` after restart become `failed` with
+`interrupted_by_restart`.
+
+Test mirati:
+
+```powershell
+python -m pytest -q tests\test_task_manager.py tests\test_worker_llm.py tests\test_task_worker_impl.py tests\test_task_browser_pool.py tests\test_task_orchestrator.py tests\test_hud_bridge_integration.py
+```
+
 ## Documenti
 
 - `docs/n8n/README.md` — configurazione del bridge n8n e workflow "echo" di prova.

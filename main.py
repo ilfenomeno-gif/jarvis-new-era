@@ -1025,6 +1025,11 @@ class JarvisLive:
         # "yesterday we talked about…" line silently disappears.
         self._resume_handle: str | None = None
         self._turn_done_event: asyncio.Event | None = None
+        self._task_idle_event = asyncio.Event()
+        self._task_idle_event.set()
+        self._task_idle_lock = threading.Lock()
+        self._task_idle_state = True
+        self._task_events_task: asyncio.Task | None = None
         self._dashboard     = None
         self._sys_monitor      = SystemMonitor()  # persistent cooldown state
         self._proactive        = ProactiveEngine()
@@ -1144,6 +1149,30 @@ class JarvisLive:
         self._hud.on_plugin = self._on_hud_plugin_toggle
         self._hud.on_system = self.ui.system_action   # SISTEMA tab → UI actions
         self._hud.on_iris_visibility = self._on_hud_iris_visibility
+        from core.task_browser_pool import TaskBrowserPool
+        from core.task_manager import TaskManager
+        from core.task_orchestrator import TaskOrchestrator
+        from core.task_worker_impl import BrowserWorker, WriterWorker
+        from core.worker_llm import WorkerLLM
+
+        self._worker_llm = WorkerLLM()
+        self._task_manager = TaskManager(
+            Path.home() / ".jarvis-vii" / "tasks.json"
+        )
+        self._task_browser_pool = TaskBrowserPool(
+            self._open_embedded_task_browser,
+            self._open_external_task_browser,
+        )
+        self._task_orchestrator = TaskOrchestrator(
+            self._task_manager,
+            {
+                "writer": WriterWorker(self._worker_llm),
+                "browser": BrowserWorker(self._worker_llm, self._task_browser_pool),
+            },
+            idle_event=self._task_idle_event,
+            on_notification=self._notify_task_group,
+            notification_window=2.0,
+        )
         # Let tools drive the HUD 3D map (open_system, tour, run scenario, …).
         self.ui.hud_command = self._hud.command
         set_ui_state = self.ui.set_state
@@ -1153,6 +1182,130 @@ class JarvisLive:
             self._hud.set_state(state)
 
         self.ui.set_state = set_ui_and_hud_state
+
+    async def _open_embedded_task_browser(self, task_id, url, ctx) -> str:
+        if ctx.cancelled.is_set():
+            raise asyncio.CancelledError
+        return await self.ui.open_task_browser_and_read(task_id, url)
+
+    async def _open_external_task_browser(self, url: str) -> None:
+        import webbrowser
+
+        opened = await asyncio.to_thread(webbrowser.open, url)
+        if not opened:
+            raise RuntimeError("The external browser could not be opened")
+
+    def _set_task_idle(self, idle: bool) -> None:
+        event = getattr(self, "_task_idle_event", None)
+        if event is None:
+            return
+        loop = getattr(self, "_loop", None)
+        try:
+            running_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            running_loop = None
+        callback = event.set if idle else event.clear
+        with self._task_idle_lock:
+            changed = self._task_idle_state != idle
+            if changed:
+                self._task_idle_state = idle
+            turn_done_event = getattr(self, "_turn_done_event", None)
+            clear_turn_done = bool(
+                not idle
+                and turn_done_event is not None
+                and turn_done_event.is_set()
+            )
+            if not changed and not clear_turn_done:
+                return
+
+            def update_events() -> None:
+                if clear_turn_done and turn_done_event is not None:
+                    turn_done_event.clear()
+                if changed:
+                    callback()
+
+            if loop is not None and loop.is_running() and running_loop is loop:
+                update_events()
+            elif loop is not None and loop.is_running():
+                loop.call_soon_threadsafe(update_events)
+            else:
+                update_events()
+
+    async def _task_hud_snapshot(self) -> list[dict]:
+        tasks = await self._task_manager.list()
+        return [
+            {
+                "task_id": task.task_id,
+                "role": task.role,
+                "status": task.status,
+                "progress": task.progress,
+                "progress_message": task.progress_message,
+                "created_at": task.created_at,
+                "updated_at": task.updated_at,
+                "result": task.result,
+                "error": task.error,
+            }
+            for task in tasks
+        ]
+
+    async def _relay_task_events(self) -> None:
+        events = self._task_manager.subscribe()
+        try:
+            self._hud.set_task_snapshot(await self._task_hud_snapshot())
+            async for event in events:
+                self._hud.push_task_event({
+                    "event_id": event.event_id,
+                    "type": event.type,
+                    "task_id": event.task_id,
+                    "role": event.role,
+                    "status": event.status,
+                    "timestamp": event.timestamp,
+                    "progress": event.progress,
+                    "message": event.message,
+                })
+                self._hud.set_task_snapshot(await self._task_hud_snapshot())
+        finally:
+            await events.aclose()
+
+    async def _notify_task_group(self, tasks) -> None:
+        await self._task_idle_event.wait()
+        summaries = []
+        for task in tasks:
+            status = "completato" if task.status == "done" else task.status
+            summaries.append(
+                f"- {task.role}: {status}; risultato completo disponibile "
+                "nell'indicatore HUD."
+            )
+        details = "\n".join(summaries)
+        instruction = (
+            "Informa brevemente l'utente, in italiano, che questi task in "
+            "background sono pronti. Non inventare contenuti dei risultati e "
+            "non invocare strumenti. JARVIS è l'unico assistente che parla.\n\n"
+            f"Task completati:\n{details}"
+        )
+        session = self.session
+        if session is None:
+            message = "Task in background pronti. Selezioni il relativo indicatore HUD per i risultati."
+            self._hud.say(message, speak=False, role="assistant")
+            self.ui.write_log(f"SYS: {message}")
+            return
+        self._set_task_idle(False)
+        try:
+            await session.send_client_content(
+                turns={"parts": [{"text": instruction}]},
+                turn_complete=True,
+            )
+        except Exception as exc:
+            logging.getLogger(__name__).exception(
+                "Could not inject task completion into the active assistant session"
+            )
+            self._set_task_idle(True)
+            message = (
+                "Task in background pronti, ma JARVIS non ha potuto annunciarli "
+                f"vocalmente: {type(exc).__name__}."
+            )
+            self._hud.say(message, speak=False, role="assistant")
+            self.ui.write_log(f"ERR: {message}")
 
     def _sync_hud_plugins(self) -> None:
         plugins = (
@@ -1560,6 +1713,7 @@ class JarvisLive:
             return
 
         if self._brain_router.backend == "local":
+            self._set_task_idle(False)
             future = asyncio.run_coroutine_threadsafe(
                 self._handle_local_text(text), self._loop
             )
@@ -1582,6 +1736,7 @@ class JarvisLive:
             learned_hints = ""
         if learned_hints:
             dynamic_instruction += f"\n[LEARNED PREFERENCES]\n{learned_hints}"
+        self._set_task_idle(False)
         asyncio.run_coroutine_threadsafe(
             self.session.send_client_content(
                 turns={"parts": [
@@ -1922,6 +2077,7 @@ class JarvisLive:
         return events
 
     async def _handle_local_text(self, text: str) -> None:
+        self._set_task_idle(False)
         async with self._local_chat_lock:
             self.ui.set_state("THINKING")
             try:
@@ -1935,6 +2091,14 @@ class JarvisLive:
                 if await self._resolve_local_tool_confirmation(text):
                     return
                 if not self._local_messages:
+                    task_orchestrator = getattr(
+                        self, "_task_orchestrator", None
+                    )
+                    task_roles = (
+                        task_orchestrator.roles()
+                        if task_orchestrator is not None
+                        else ()
+                    )
                     self._local_messages.append({
                         "role": "system",
                         "content": (
@@ -1953,7 +2117,10 @@ class JarvisLive:
                             "specifies both the recognized app and exact text to type. "
                             "The bounded agent loop instead requires session approval bound to "
                             "the exact goal and action limit; its screen images are sent to "
-                            "Gemini cloud."
+                            "Gemini cloud. For independent background work, use "
+                            "delegate_task with a registered worker role and continue "
+                            "answering the user without waiting; JARVIS alone speaks.\n"
+                            f"Registered worker roles: {', '.join(task_roles)}."
                         ),
                     })
                 self._local_messages.append({"role": "user", "content": text})
@@ -2212,6 +2379,7 @@ class JarvisLive:
             finally:
                 if not self.ui.muted:
                     self.ui.set_state("LISTENING")
+                self._set_task_idle(True)
 
     async def _resolve_local_tool_confirmation(self, text: str) -> bool:
         pending = self._local_pending_confirmation
@@ -2320,6 +2488,14 @@ class JarvisLive:
     def set_speaking(self, value: bool, level: float | None = None):
         with self._speaking_lock:
             self._is_speaking = value
+        if value:
+            self._set_task_idle(False)
+        elif (
+            self._turn_done_event is not None
+            and self._turn_done_event.is_set()
+            and (self.audio_in_queue is None or self.audio_in_queue.empty())
+        ):
+            self._set_task_idle(True)
         self._hud.set_speaking(value, level=level)
         if value:
             self.ui.set_state("SPEAKING")
@@ -2355,6 +2531,7 @@ class JarvisLive:
     def speak(self, text: str):
         if not self._loop or not self.session:
             return
+        self._set_task_idle(False)
         asyncio.run_coroutine_threadsafe(
             self.session.send_client_content(
                 turns={"parts": [{"text": text}]},
@@ -2379,19 +2556,41 @@ class JarvisLive:
         if os.environ.get("JARVIS_TOOL_ROUTING", "0") != "1" or not self._recent_user_texts:
             return everything
         selected = self._tool_router.select(" ".join(self._recent_user_texts), everything, self._tools_used)
+        from core.task_orchestrator import TASK_TOOL_DECLARATIONS
+
+        selected_names = {tool["name"] for tool in selected}
+        selected.extend(
+            tool
+            for tool in TASK_TOOL_DECLARATIONS
+            if tool["name"] not in selected_names
+        )
         print(f"[JARVIS] 🧭 ToolRouter: {len(selected)}/{len(everything)} tool "
               f"({len(json.dumps(selected))}/{len(json.dumps(everything))} byte)")
         return selected
 
     def _all_tool_declarations(self) -> list:
+        from core.task_orchestrator import TASK_TOOL_DECLARATIONS
+
         return (
             TOOL_DECLARATIONS
             + self._action_registry.get_tool_declarations()
             + self._plugin_registry.get_tool_declarations()
+            + TASK_TOOL_DECLARATIONS
         )
 
     def _select_local_tool_declarations(self, text: str) -> list:
-        return self._tool_router.select_for_request(text, self._all_tool_declarations())
+        from core.task_orchestrator import TASK_TOOL_DECLARATIONS
+
+        selected = self._tool_router.select_for_request(
+            text, self._all_tool_declarations()
+        )
+        selected_names = {tool["name"] for tool in selected}
+        selected.extend(
+            tool
+            for tool in TASK_TOOL_DECLARATIONS
+            if tool["name"] not in selected_names
+        )
+        return selected
 
     # ── Which engine holds the conversation ──────────────────────────────────
     # Everything in this section is inert on a default install: `_engine_mode()`
@@ -2562,6 +2761,12 @@ class JarvisLive:
         if mem_str:
             parts.append(mem_str)
         parts.append(sys_prompt)
+        if getattr(self, "_task_orchestrator", None) is not None:
+            parts.append(
+                "[BACKGROUND TASK WORKERS]\n"
+                "Per la politica di delega dei task in background, segui le "
+                "istruzioni del system prompt."
+            )
 
         cfg = dict(
             response_modalities=["AUDIO"],
@@ -3025,7 +3230,14 @@ class JarvisLive:
         result = "Done."
 
         try:
-            if self._action_registry.has(name):
+            if name in {
+                "delegate_task",
+                "list_tasks",
+                "cancel_task",
+                "get_task_result",
+            }:
+                result = await self._task_orchestrator.handle_tool(name, args)
+            elif self._action_registry.has(name):
                 def run_action():
                     ctx = {
                         "player": self.ui,
@@ -3439,6 +3651,8 @@ class JarvisLive:
                     )
                     permitted_frames = ()
 
+            if permitted_frames:
+                self._set_task_idle(False)
             for data in permitted_frames:
                 loop.call_soon_threadsafe(
                     self.out_queue.put_nowait,
@@ -3533,6 +3747,7 @@ class JarvisLive:
                         if self._interrupted:
                             pass  # discard: interrupted
                         else:
+                            self._set_task_idle(False)
                             if self._turn_done_event and self._turn_done_event.is_set():
                                 self._turn_done_event.clear()
                             # Split into ~50 ms chunks so interrupt() stops audio within 50 ms
@@ -3552,6 +3767,7 @@ class JarvisLive:
                         if sc.input_transcription and sc.input_transcription.text:
                             txt = _clean_transcript(sc.input_transcription.text)
                             if txt:
+                                self._set_task_idle(False)
                                 _append_transcript(in_buf, txt)
                                 self._last_user_speech = time.monotonic()
 
@@ -4008,6 +4224,7 @@ class JarvisLive:
                         break
                     await asyncio.sleep(0.1)
                 if self.session:
+                    self._set_task_idle(False)
                     await self.session.send_client_content(
                         turns={"parts": [{"text": text}]},
                         turn_complete=True,
@@ -4025,6 +4242,11 @@ class JarvisLive:
 
     async def run(self):
         self._loop = asyncio.get_event_loop()
+        await self._task_orchestrator.start()
+        self._task_events_task = asyncio.create_task(
+            self._relay_task_events(),
+            name="jarvis-task-hud-relay",
+        )
         self._sync_hud_plugins()
         try:
             self._hud.start(window="none")
@@ -4132,6 +4354,7 @@ class JarvisLive:
                         asyncio.TaskGroup() as tg,
                     ):
                         self.session          = session
+                        self._set_task_idle(True)
                         self.audio_in_queue   = asyncio.Queue()
                         self.out_queue        = asyncio.Queue(maxsize=200)
                         self._turn_done_event = asyncio.Event()
@@ -4266,6 +4489,7 @@ class JarvisLive:
                     else:
                         self._conn_backoff = 3
                 finally:
+                    self._set_task_idle(False)
                     self.session = None
                     # Only save if there was a real conversation (≥3 turns)
                     if len(self._session_log) >= 3:
@@ -4283,6 +4507,41 @@ class JarvisLive:
         except KeyboardInterrupt:
             pass
         finally:
+            self._set_task_idle(False)
+            try:
+                await self._task_orchestrator.shutdown()
+            except Exception as exc:
+                logging.getLogger(__name__).exception(
+                    "Task orchestrator shutdown failed"
+                )
+                self.ui.write_log(
+                    f"ERR: Task orchestrator shutdown failed: {type(exc).__name__}."
+                )
+            if self._task_events_task is not None:
+                relay_results = await asyncio.gather(
+                    self._task_events_task,
+                    return_exceptions=True,
+                )
+                for relay_result in relay_results:
+                    if isinstance(relay_result, Exception):
+                        logging.getLogger(__name__).error(
+                            "Task HUD relay failed during shutdown: %s",
+                            relay_result,
+                            exc_info=(
+                                type(relay_result),
+                                relay_result,
+                                relay_result.__traceback__,
+                            ),
+                        )
+            try:
+                await self._worker_llm.close()
+            except Exception as exc:
+                logging.getLogger(__name__).exception(
+                    "Task worker LLM shutdown failed"
+                )
+                self.ui.write_log(
+                    f"ERR: Task worker LLM shutdown failed: {type(exc).__name__}."
+                )
             self._hud.stop()
             browser_automation = getattr(self, "_browser_automation", None)
             if browser_automation is not None:

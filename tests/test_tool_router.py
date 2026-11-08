@@ -235,7 +235,7 @@ def test_select_tool_declarations_is_opt_in(monkeypatch):
     obj._tools_used = set()
     monkeypatch.delenv("JARVIS_TOOL_ROUTING", raising=False)
     full = obj._select_tool_declarations()
-    assert len(full) == len(main.TOOL_DECLARATIONS)
+    assert len(full) == len(main.TOOL_DECLARATIONS) + 4
     monkeypatch.setenv("JARVIS_TOOL_ROUTING", "1")
     assert len(obj._select_tool_declarations()) < len(full)
     obj._recent_user_texts.clear()

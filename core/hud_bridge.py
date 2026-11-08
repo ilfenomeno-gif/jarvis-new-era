@@ -23,9 +23,10 @@ import sys
 import threading
 import time
 import webbrowser
+from collections.abc import Callable, Iterable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Callable, Iterable
+from urllib.parse import unquote, urlsplit
 
 try:
     import psutil  # type: ignore
@@ -67,6 +68,7 @@ class HudBridge:
         }
         self._gpu_name = ""
         self._plugins: list[dict] = []
+        self._task_snapshot: dict[str, dict] = {}
         self._runtime: dict = {
             "skills": {"active": 0, "total": 0},
             "task": {"status": "idle", "completed": 0, "total": 0, "progress": 0},
@@ -97,7 +99,8 @@ class HudBridge:
             def do_GET(self):
                 if not self._host_ok():
                     return self.send_error(403)
-                if self.path in ("/", "/index.html"):
+                request_path = urlsplit(self.path).path
+                if request_path in ("/", "/index.html"):
                     data = bridge.html_path.read_bytes()
                     self.send_response(200)
                     self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -105,10 +108,38 @@ class HudBridge:
                     self.send_header("Cache-Control", "no-store")
                     self.end_headers()
                     self.wfile.write(data)
-                elif self.path == "/events":
+                elif request_path == "/events":
                     self._sse()
+                elif request_path in {"/api/tasks", "/api/tasks/"}:
+                    if self.headers.get("X-HUD") != "1":
+                        return self.send_error(403)
+                    self._send_json({
+                        "tasks": [
+                            bridge._public_task(task)
+                            for task in bridge._task_snapshot.values()
+                        ]
+                    })
+                elif request_path.startswith("/api/tasks/"):
+                    if self.headers.get("X-HUD") != "1":
+                        return self.send_error(403)
+                    task_id = unquote(request_path.removeprefix("/api/tasks/"))
+                    if not task_id or "/" in task_id:
+                        return self.send_error(400)
+                    task = bridge._task_snapshot.get(task_id)
+                    if task is None:
+                        return self.send_error(404)
+                    self._send_json({"task": bridge._task_detail(task)})
                 else:
                     self.send_error(404)
+
+            def _send_json(self, payload: dict) -> None:
+                data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(data)
 
             def _sse(self):
                 q: queue.Queue = queue.Queue(maxsize=200)
@@ -121,7 +152,11 @@ class HudBridge:
                     self.end_headers()
                     hello = {"type": "hello", "stats": bridge._stats, "gpu_name": bridge._gpu_name,
                              "plugins": bridge._plugins, "speaking": bridge._speaking,
-                             "runtime": bridge._runtime, "state": bridge._state}
+                             "runtime": bridge._runtime, "state": bridge._state,
+                             "tasks": [
+                                 bridge._public_task(task)
+                                 for task in bridge._task_snapshot.values()
+                             ]}
                     self.wfile.write(f"data: {json.dumps(hello)}\n\n".encode())
                     self.wfile.flush()
                     while not bridge._stop.is_set():
@@ -212,6 +247,51 @@ class HudBridge:
         if not isinstance(text, str):
             raise TypeError("chat stream text must be a string")
         self._broadcast({"type": "chat_stream", "phase": phase, "text": text})
+
+    def set_task_snapshot(self, tasks: list[dict]) -> None:
+        """Cache task details for the HUD and publish a result-free snapshot."""
+        snapshot: dict[str, dict] = {}
+        for task in tasks:
+            if not isinstance(task, dict):
+                raise TypeError("task snapshots must contain dictionaries")
+            task_id = task.get("task_id")
+            if not isinstance(task_id, str) or not task_id:
+                raise ValueError("task snapshots require a non-empty task_id")
+            snapshot[task_id] = dict(task)
+        self._task_snapshot = snapshot
+        self._broadcast({
+            "type": "task_snapshot",
+            "tasks": [self._public_task(task) for task in snapshot.values()],
+        })
+
+    def push_task_event(self, event: dict) -> None:
+        """Publish a TaskManager event to HUD clients on the existing SSE stream."""
+        if not isinstance(event, dict):
+            raise TypeError("task event must be a dictionary")
+        self._broadcast({"type": "task_event", "event": event})
+
+    @staticmethod
+    def _public_task(task: dict) -> dict:
+        return {
+            key: task.get(key)
+            for key in (
+                "task_id",
+                "role",
+                "status",
+                "progress",
+                "progress_message",
+                "created_at",
+                "updated_at",
+            )
+        }
+
+    @staticmethod
+    def _task_detail(task: dict) -> dict:
+        return {
+            **HudBridge._public_task(task),
+            "result": task.get("result"),
+            "error": task.get("error"),
+        }
 
     def command(self, action: str, **kwargs) -> None:
         """Send a command to the HUD so Jarvis can drive the 3D map UI.
