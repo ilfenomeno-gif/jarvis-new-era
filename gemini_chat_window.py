@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 import queue
 import threading
+import time
 
 from PyQt6.QtCore import QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
@@ -19,6 +21,8 @@ from PyQt6.QtWidgets import (
 
 from core.gemini_chat import ask_gemini_with_thoughts
 from core.prompt_router import PromptRouter
+
+_INPUT_LOGGER = logging.getLogger("jarvis.ui.input")
 
 
 class GeminiChatPanel(QWidget):
@@ -86,6 +90,22 @@ class GeminiChatPanel(QWidget):
         self._poll_timer.start(100)
 
     def _send(self) -> None:
+        started = time.perf_counter()
+        _INPUT_LOGGER.info("INPUT_START source=gemini_chat")
+        try:
+            self._send_input()
+        except Exception:
+            _INPUT_LOGGER.exception(
+                "INPUT_HANDLER_FAIL source=gemini_chat duration_ms=%.3f",
+                (time.perf_counter() - started) * 1000,
+            )
+            return
+        _INPUT_LOGGER.info(
+            "INPUT_HANDLER_OK source=gemini_chat duration_ms=%.3f",
+            (time.perf_counter() - started) * 1000,
+        )
+
+    def _send_input(self) -> None:
         prompt = self._input.text().strip()
         if not prompt or not self._send_button.isEnabled():
             return
@@ -127,6 +147,7 @@ class GeminiChatPanel(QWidget):
             self._send_button.setEnabled(True)
             self._input.setEnabled(True)
             self._status.setText(f"Could not start Gemini request: {exc}")
+            raise
 
     def _poll_responses(self) -> None:
         try:

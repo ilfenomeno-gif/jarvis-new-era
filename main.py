@@ -1469,7 +1469,21 @@ class JarvisLive:
             logging.getLogger(__name__).warning("Pattern observation unavailable: %s", exc)
 
     def _on_hud_message(self, text: str) -> None:
-        self._on_text_command(text, from_hud=True)
+        started = time.perf_counter()
+        logger = logging.getLogger("jarvis.ui.input")
+        logger.info("INPUT_START source=hud_chat")
+        try:
+            self._on_text_command(text, from_hud=True)
+        except Exception:
+            logger.exception(
+                "INPUT_HANDLER_FAIL source=hud_chat duration_ms=%.3f",
+                (time.perf_counter() - started) * 1000,
+            )
+            raise
+        logger.info(
+            "INPUT_HANDLER_OK source=hud_chat duration_ms=%.3f",
+            (time.perf_counter() - started) * 1000,
+        )
 
     @staticmethod
     def _hud_visibility_request(text: str) -> bool | None:
