@@ -389,12 +389,14 @@ def test_embedded_hud_remains_active_when_load_fails():
             return self.target
 
     browser, main_stack, center_stack = _Browser(), _Stack(), _Stack()
+    browser_split = object()
     header, content, footer = _Panel(), _Panel(), _Panel()
     window = SimpleNamespace(
         _hud_browser_view=browser,
         _hud_browser_requested=False,
         _hud_browser_loaded=False,
         _hud_cam_stack=center_stack,
+        _browser_split=browser_split,
         _main_content_stack=main_stack,
         _header_panel=header,
         _content_panel=content,
@@ -414,7 +416,7 @@ def test_embedded_hud_remains_active_when_load_fails():
     MainWindow._on_hud_browser_load_finished(window, True)
     assert window._hud_browser_loaded
     assert center_stack.current is browser
-    assert main_stack.current is center_stack
+    assert main_stack.current is browser_split
     assert header.hidden and content.hidden and footer.hidden
 
     MainWindow._on_hud_browser_load_finished(window, False)

@@ -172,11 +172,12 @@ def test_browser_key_dispatch_failure_uses_qt_fallback():
 
     callbacks = []
     logs = []
+    browser_split = object()
     browser_panel = object()
 
     class StackRecorder:
         def currentWidget(self):
-            return browser_panel
+            return browser_split
 
     class ViewRecorder:
         def setFocus(self):
@@ -188,7 +189,12 @@ def test_browser_key_dispatch_failure_uses_qt_fallback():
 
     window = SimpleNamespace(
         _main_content_stack=StackRecorder(),
+        _browser_split=browser_split,
         _browser_panel=browser_panel,
+        _browser_is_open=True,
+        _browser_panel_is_active=lambda: (
+            MainWindow._browser_panel_is_active(window)
+        ),
         _browser_view=ViewRecorder(),
         _browser_page=PageRecorder(),
         _log_sig=SimpleNamespace(emit=logs.append),

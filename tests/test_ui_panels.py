@@ -177,7 +177,7 @@ def test_embedded_hud_hides_legacy_chrome_and_briefing(real_ui):
     assert not _visible(win)["content"]
     assert not _visible(win)["footer"]
     assert win.windowTitle() == "JARVIS VII · IRIS"
-    assert win._main_content_stack.currentWidget() is win._hud_cam_stack
+    assert win._main_content_stack.currentWidget() is win._browser_split
 
     win._render_panels()
     real_ui.app.processEvents()

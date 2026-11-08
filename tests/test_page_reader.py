@@ -371,12 +371,13 @@ def test_ui_page_read_and_stop_requests_use_qt_signals():
 def test_read_page_slot_extracts_dom_text_asynchronously():
     from ui import MainWindow
 
+    browser_split = object()
     browser_panel = object()
     calls = []
 
     class StackRecorder:
         def currentWidget(self):
-            return browser_panel
+            return browser_split
 
     class PageRecorder:
         def runJavaScript(self, script, callback):
@@ -394,7 +395,12 @@ def test_read_page_slot_extracts_dom_text_asynchronously():
     logs = []
     window = SimpleNamespace(
         _main_content_stack=StackRecorder(),
+        _browser_split=browser_split,
         _browser_panel=browser_panel,
+        _browser_is_open=True,
+        _browser_panel_is_active=lambda: (
+            MainWindow._browser_panel_is_active(window)
+        ),
         _browser_page=PageRecorder(),
         _on_browser_page_text=page_text_callback,
         _page_read_pending=False,
@@ -422,12 +428,13 @@ def test_read_page_slot_extracts_dom_text_asynchronously():
 def test_read_page_slot_selects_headings_and_links_from_fixed_modes():
     from ui import MainWindow
 
+    browser_split = object()
     browser_panel = object()
     calls = []
 
     class StackRecorder:
         def currentWidget(self):
-            return browser_panel
+            return browser_split
 
     class PageRecorder:
         def runJavaScript(self, script, callback):
@@ -442,7 +449,12 @@ def test_read_page_slot_selects_headings_and_links_from_fixed_modes():
 
     window = SimpleNamespace(
         _main_content_stack=StackRecorder(),
+        _browser_split=browser_split,
         _browser_panel=browser_panel,
+        _browser_is_open=True,
+        _browser_panel_is_active=lambda: (
+            MainWindow._browser_panel_is_active(window)
+        ),
         _browser_page=PageRecorder(),
         _on_browser_page_text=page_text_callback,
         _page_read_pending=False,

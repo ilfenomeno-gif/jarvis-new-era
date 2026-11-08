@@ -93,8 +93,9 @@ def test_integrated_browser_open_and_close_restore_previous_stack():
     from ui import MainWindow
 
     class StackRecorder:
-        def __init__(self, current):
+        def __init__(self, current, return_widget):
             self.current = current
+            self.return_widget = return_widget
 
         def currentWidget(self):
             return self.current
@@ -103,7 +104,7 @@ def test_integrated_browser_open_and_close_restore_previous_stack():
             self.current = widget
 
         def indexOf(self, widget):
-            return 0 if widget is hud_view else 1 if widget is browser_panel else -1
+            return 0 if widget is self.return_widget else 1 if widget is browser_split else -1
 
     class AddressRecorder:
         def setText(self, value):
@@ -113,33 +114,58 @@ def test_integrated_browser_open_and_close_restore_previous_stack():
         def setUrl(self, value):
             self.url = value
 
-    hud_view = object()
-    browser_panel = object()
-    stack = StackRecorder(hud_view)
+    class SplitterRecorder:
+        def width(self):
+            return 1000
+
+        def setSizes(self, sizes):
+            self.sizes = sizes
+
+    class PanelRecorder:
+        def __init__(self):
+            self.visible = False
+
+        def show(self):
+            self.visible = True
+
+        def hide(self):
+            self.visible = False
+
+    return_widget = object()
+    browser_panel = PanelRecorder()
+    browser_split = SplitterRecorder()
+    stack = StackRecorder(return_widget, return_widget)
     address = AddressRecorder()
     browser = BrowserRecorder()
     status = AddressRecorder()
     window = SimpleNamespace(
         _main_content_stack=stack,
+        _browser_split=browser_split,
         _browser_panel=browser_panel,
         _browser_return_widget=None,
+        _browser_is_open=False,
         _browser_address=address,
         _browser_view=browser,
         _browser_status=status,
         _update_browser_navigation=lambda: None,
-        _hud_cam_stack=hud_view,
+        _hud_cam_stack=return_widget,
     )
 
     MainWindow._open_url_in_webview(window, "example.com")
     MainWindow._open_url_in_webview(window, "https://example.org")
 
-    assert stack.current is browser_panel
+    assert stack.current is browser_split
+    assert window._browser_is_open
+    assert browser_panel.visible
+    assert browser_split.sizes == [550, 450]
     assert address.value == "https://example.org/"
     assert browser.url.toString() == "https://example.org/"
-    assert window._browser_return_widget is hud_view
+    assert window._browser_return_widget is return_widget
 
     MainWindow.close_browser(window)
-    assert stack.current is hud_view
+    assert stack.current is return_widget
+    assert not window._browser_is_open
+    assert not browser_panel.visible
     assert window._browser_return_widget is None
 
 

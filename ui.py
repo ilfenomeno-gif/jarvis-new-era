@@ -3361,9 +3361,17 @@ class MainWindow(QMainWindow):
 
         self._browser_panel = self._build_browser_panel()
         self._browser_return_widget: QWidget | None = None
+        self._browser_is_open = False
+        # Keep the HUD chat mounted when the integrated browser is opened.
+        self._browser_split = QSplitter(Qt.Orientation.Horizontal)
+        self._browser_split.addWidget(self._hud_cam_stack)
+        self._browser_split.addWidget(self._browser_panel)
+        self._browser_split.setStretchFactor(0, 3)
+        self._browser_split.setStretchFactor(1, 2)
+        self._browser_split.setCollapsible(0, False)
+        self._browser_panel.hide()
         self._main_content_stack = QStackedWidget()
-        self._main_content_stack.addWidget(self._hud_cam_stack)
-        self._main_content_stack.addWidget(self._browser_panel)
+        self._main_content_stack.addWidget(self._browser_split)
         try:
             self._gemini_chat_panel = GeminiChatPanel()
             self._gemini_chat_panel.closeRequested.connect(
@@ -3376,7 +3384,7 @@ class MainWindow(QMainWindow):
                 f"[JARVIS] Gemini chat panel unavailable; fallback enabled: {exc}",
                 flush=True,
             )
-        self._main_content_stack.setCurrentWidget(self._hud_cam_stack)
+        self._main_content_stack.setCurrentWidget(self._browser_split)
 
         # GEV checks this flag with strict boolean equality during module startup.
         embed_script = QWebEngineScript()
@@ -3791,7 +3799,7 @@ class MainWindow(QMainWindow):
             return
         self._hud_browser_loaded = bool(succeeded)
         self._hud_cam_stack.setCurrentWidget(self._hud_browser_view)
-        self._main_content_stack.setCurrentWidget(self._hud_cam_stack)
+        self._main_content_stack.setCurrentWidget(self._browser_split)
         self._header_panel.hide()
         self._content_panel.hide()
         self._footer_panel.hide()
@@ -3818,7 +3826,7 @@ class MainWindow(QMainWindow):
         if visible:
             view = self._viewer3d_ensure()
             self._hud_cam_stack.setCurrentWidget(view)
-            self._main_content_stack.setCurrentWidget(self._hud_cam_stack)
+            self._main_content_stack.setCurrentWidget(self._browser_split)
         elif self._viewer3d is not None:
             self._hud_cam_stack.setCurrentWidget(self._active_hud_widget())
 
@@ -3886,7 +3894,7 @@ class MainWindow(QMainWindow):
 
     # --- Live camera stream in HUD area ------------------------------------
     def _on_cam_stream(self, start: bool) -> None:
-        self._main_content_stack.setCurrentWidget(self._hud_cam_stack)
+        self._main_content_stack.setCurrentWidget(self._browser_split)
         if start:
             self._hud_cam_stack.setCurrentIndex(1)
         else:
@@ -3949,7 +3957,7 @@ class MainWindow(QMainWindow):
         self._cam_stop.set()
 
     def load_gev(self) -> None:
-        self._main_content_stack.setCurrentWidget(self._hud_cam_stack)
+        self._main_content_stack.setCurrentWidget(self._browser_split)
         self._hud_cam_stack.setCurrentWidget(self._gev_stack)
         if self._gev_load_started:
             return
@@ -4091,7 +4099,7 @@ class MainWindow(QMainWindow):
             ):
                 self._main_content_stack.setCurrentWidget(previous)
             else:
-                self._main_content_stack.setCurrentWidget(self._hud_cam_stack)
+                self._main_content_stack.setCurrentWidget(self._browser_split)
         self._gemini_previous_widget = None
 
     def _ask_open_streaming_in_chrome(self, url: str) -> bool:
@@ -4201,13 +4209,25 @@ class MainWindow(QMainWindow):
 
     def _open_url_in_webview(self, url: str) -> None:
         normalized_url = normalize_http_url(url)
-        if self._main_content_stack.currentWidget() is not self._browser_panel:
+        if self._main_content_stack.currentWidget() is not self._browser_split:
             self._browser_return_widget = self._main_content_stack.currentWidget()
-        self._main_content_stack.setCurrentWidget(self._browser_panel)
+        self._main_content_stack.setCurrentWidget(self._browser_split)
+        if not self._browser_is_open:
+            self._browser_is_open = True
+            self._browser_panel.show()
+            total_width = max(self._browser_split.width(), 2)
+            hud_width = round(total_width * 0.55)
+            self._browser_split.setSizes([hud_width, total_width - hud_width])
         self._browser_address.setText(normalized_url)
         self._browser_view.setUrl(QUrl(normalized_url))
         self._browser_status.setText("Loading…")
         self._update_browser_navigation()
+
+    def _browser_panel_is_active(self) -> bool:
+        return (
+            self._browser_is_open
+            and self._main_content_stack.currentWidget() is self._browser_split
+        )
 
     def _sync_browser_address(self, url: QUrl) -> None:
         if not self._browser_address.hasFocus():
@@ -4228,7 +4248,7 @@ class MainWindow(QMainWindow):
         self._log_sig.emit("Browser: navigazione non HTTP(S) bloccata")
 
     def _press_key_in_webview(self, key: str) -> None:
-        if self._main_content_stack.currentWidget() is not self._browser_panel:
+        if not self._browser_panel_is_active():
             self._log_sig.emit("Browser: impossibile premere un tasto, pagina non attiva")
             return
         self._browser_view.setFocus()
@@ -4274,7 +4294,7 @@ class MainWindow(QMainWindow):
         self._log_sig.emit(f"Browser: fallback Qt eseguito per {key}")
 
     def _click_link_in_webview(self, link_text: str) -> None:
-        if self._main_content_stack.currentWidget() is not self._browser_panel:
+        if not self._browser_panel_is_active():
             self._log_sig.emit("Browser: impossibile cliccare, pagina non attiva")
             return
         try:
@@ -4298,7 +4318,7 @@ class MainWindow(QMainWindow):
             self._log_sig.emit("Browser: link visibile non trovato")
 
     def _read_page_aloud(self, mode: str = "page") -> None:
-        if self._main_content_stack.currentWidget() is not self._browser_panel:
+        if not self._browser_panel_is_active():
             self._log_sig.emit("Screen reader: aprire prima una pagina nel browser Jarvis")
             return
         if self._page_read_pending or self._page_reader.is_running:
@@ -4380,11 +4400,14 @@ class MainWindow(QMainWindow):
         self._update_browser_navigation()
 
     def close_browser(self) -> None:
+        self._browser_is_open = False
+        self._browser_panel.hide()
+        self._browser_split.setSizes([max(self._browser_split.width(), 1), 0])
         previous = self._browser_return_widget
         if previous is not None and self._main_content_stack.indexOf(previous) >= 0:
             self._main_content_stack.setCurrentWidget(previous)
         else:
-            self._main_content_stack.setCurrentWidget(self._hud_cam_stack)
+            self._main_content_stack.setCurrentWidget(self._browser_split)
         self._browser_return_widget = None
 
     def closeEvent(self, event) -> None:
