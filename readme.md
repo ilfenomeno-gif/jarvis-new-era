@@ -76,6 +76,8 @@ esempio `DEBUG`). `JARVIS_UI_LAYOUT` seleziona il file di layout HUD/UI;
 una porta effimera). L'opzione CLI `--hud-port` prevale sulla variabile
 d'ambiente, ad esempio `python main.py --hud-port 8766`. I test usano profili
 temporanei e non toccano il layout salvato dell'utente.
+Il livello `DEBUG` non registra payload sensibili; se nei log compaiono
+credenziali, è un bug: apri una issue.
 
 La suite automatica non-live imposta Qt offscreen tramite `tests/conftest.py`;
 i test che creano finestre QtWebEngine reali vengono saltati in questa modalita

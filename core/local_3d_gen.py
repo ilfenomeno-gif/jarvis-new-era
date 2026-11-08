@@ -22,10 +22,11 @@ import sys
 import threading
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
+from core.logging_config import install_redaction_filter
 from core.model_gen import clean_prompt, model_name
 from core.viewer3d import MAX_MODEL_BYTES, MODELS_DIR
 
@@ -80,6 +81,7 @@ def _log_event(event: str, **fields) -> None:
             )
             handler._jarvis_3d_log = True
             handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+            install_redaction_filter(handler)
             _LOGGER.addHandler(handler)
         _LOGGER.info("%s", json.dumps({"event": event, **fields}, sort_keys=True))
 
@@ -390,7 +392,7 @@ def _cache_lookup(key: str, models_dir: Path) -> Path | None:
         return None
     try:
         created_at = datetime.fromisoformat(str(metadata["created_at"]))
-        if ttl_days and datetime.now(timezone.utc) - created_at > timedelta(days=ttl_days):
+        if ttl_days and datetime.now(UTC) - created_at > timedelta(days=ttl_days):
             _remove_cache_entry(key)
             _log_event("cache_invalidated", reason="expired")
             return None
@@ -419,7 +421,7 @@ def _cache_lookup(key: str, models_dir: Path) -> Path | None:
         if not _valid_glb(target) or _sha256_file(target) != metadata["sha256"]:
             target.unlink(missing_ok=True)
             return None
-    metadata["last_accessed_at"] = datetime.now(timezone.utc).isoformat()
+    metadata["last_accessed_at"] = datetime.now(UTC).isoformat()
     _write_json_atomic(metadata_path, metadata)
     _log_event(
         "cache_hit",
@@ -443,7 +445,7 @@ def _write_json_atomic(path: Path, payload: dict) -> None:
 
 def _enforce_cache_limits(new_key: str) -> bool:
     ttl_days, max_bytes = _cache_policy()
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     entries = []
     for metadata_path in CACHE_DIR.glob("*.json"):
         key = metadata_path.stem
@@ -510,8 +512,8 @@ def _cache_store(
             "prompt": prompt,
             "backend": backend_name,
             "model_name": model_filename,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "last_accessed_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
+            "last_accessed_at": datetime.now(UTC).isoformat(),
             "size_bytes": size,
             "sha256": _sha256_file(glb_path),
             "ttl_days_at_creation": ttl_days,

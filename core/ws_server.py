@@ -15,6 +15,7 @@ from typing import Any
 import websockets
 
 from core.gemini_chat import ask_gemini
+from core.logging_config import install_redaction_filter
 
 _BASE_DIR = Path(__file__).resolve().parent.parent
 _CONFIG_PATH = _BASE_DIR / "config" / "api_keys.json"
@@ -46,6 +47,7 @@ def _configure_logging() -> None:
     handler.setFormatter(
         logging.Formatter("%(asctime)s %(levelname)s %(message)s")
     )
+    install_redaction_filter(handler)
     _LOGGER.addHandler(handler)
 
 

@@ -27,10 +27,13 @@ import logging
 import os
 import pkgutil
 
+from core.logging_config import install_redaction_filter
+
 logger = logging.getLogger("jarvis.plugin_manager")
 if not logger.handlers:
     handler = logging.StreamHandler()
     handler.setFormatter(logging.Formatter("[PluginManager] %(message)s"))
+    install_redaction_filter(handler)
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
 
