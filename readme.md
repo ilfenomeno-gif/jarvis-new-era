@@ -8,6 +8,66 @@ Assistente desktop AI personale (Windows-first), fusione di:
 
 **Architettura**: Opzione 2 — *Python come cervello, n8n come motore di workflow*. Il realtime vocale resta sul desktop; n8n orchestra flussi/integrazioni/schedulazioni come tool remoto.
 
+## 🌟 Nuove Funzionalità
+
+- **Simbiosi Hardware**: monitora CPU, RAM e processi tramite il
+  `SymbiosisHub`; include anche moduli per rete, appunti e monitor. I moduli
+  dipendono dalla disponibilità delle rispettive funzionalità sul sistema.
+- **Logging Diagnostico**: log strutturati, filtro dei dati sensibili e
+  limitazione dei messaggi ripetuti. I quattro file principali sono
+  `logs/jarvis.log`, `logs/jarvis.diagnostics.log`,
+  `logs/jarvis.session.jsonl` e `logs/jarvis.external.log`.
+- **Plugin Web e interfacce HTML/JS**: l'HUD usa contenuti web e i plugin
+  Python possono aprire servizi nel browser integrato, come code-server.
+  Il caricatore attuale scopre plugin `.py`: non risulta un caricatore
+  dedicato per plugin HTML/JS autonomi.
+
+## 🚀 Installazione e Avvio
+
+Su Windows 10/11, con Python 3.11+:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m playwright install
+.\.venv\Scripts\python.exe main.py
+```
+
+In alternativa, dopo aver creato `.venv`, avvia con `python main.py`;
+`python main.py --check-startup` verifica interprete e dipendenze iniziali.
+Il motore vocale predefinito richiede una chiave Gemini, configurabile
+all'avvio. Per i prerequisiti e le opzioni locali, consulta
+[INSTALL_WINDOWS.md](INSTALL_WINDOWS.md).
+
+## 🧩 Architettura
+
+`core/` contiene runtime, orchestrazione, HUD, simbiosi e logging;
+`actions/` espone le azioni richiamabili; `plugins/` raccoglie estensioni
+Python rilevate dal caricatore; `docs/` contiene guide e dettagli tecnici.
+L'interfaccia desktop usa PyQt e integra una HUD web.
+
+## 📚 Documentazione Dettagliata
+
+- [Sistema di Logging Diagnostico](docs/ARCHITETTURA.md): formato, file,
+  filtri, report e modalità legacy.
+- [Plugin Web](docs/PLUGIN_WEB.md): documento richiesto, **non ancora presente**
+  nel progetto.
+- [Connettori e Simbiosi Hardware](docs/CONNETTORI.md).
+
+## 🛠️ Comandi Rapidi
+
+| Comando vocale | Funzione |
+|---|---|
+| «Jarvis, dammi il report del sistema» | Genera e salva il report diagnostico. |
+| «Jarvis, che errori ci sono?» | Richiede il report diagnostico. |
+| «Jarvis, controlla la CPU» | Mostra l'utilizzo della CPU. |
+| «Jarvis, controlla la RAM» | Mostra l'utilizzo della memoria. |
+| «Jarvis, quali processi usano più CPU?» | Elenca i processi con maggiore utilizzo CPU. |
+| «Jarvis, leggi gli errori di Chromium» | Legge il log Chromium, se acquisito esternamente. |
+
+Il comando «Jarvis, apri il tornado» non risulta associato a un plugin
+dedicato nella versione attuale.
+
 ## Cosa c'è di nuovo rispetto a B
 
 | Area | Aggiunta | File |
@@ -214,10 +274,11 @@ i test che creano finestre QtWebEngine reali vengono saltati in questa modalita
 per evitare crash nativi. Non serve impostare `CI=true`:
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest -q -rs -m "not live" --ignore=tests\test_viewer3d.py
+.\.venv\Scripts\python.exe -m pytest -q -rs -m "not live and not benchmark"
 ```
 
-Ultima esecuzione locale: **1157 passed, 10 skipped, 5 deselected, 4 xfailed**.
+I test del viewer sono isolati con `pytest-isolated`, incluso nelle dipendenze
+di test, per evitare la condivisione dello stato Qt con la suite principale.
 I test UI QtWebEngine con finestra reale sono al momento **solo locali/manuali**:
 eseguili da una sessione Windows interattiva con display disponibile, senza
 `CI=true` e impostando `QT_QPA_PLATFORM=windows`, ad esempio:
