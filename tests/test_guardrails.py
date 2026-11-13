@@ -104,3 +104,47 @@ def test_internal_shell_commands_can_contain_sequencing_syntax():
         ["powershell", "-Command", "first-command; second-command"],
         internal=True,
     )
+
+
+def test_chrome_is_allowed_only_for_internal_browser_startup(tmp_path):
+    chrome = tmp_path / "chrome.exe"
+    chrome.touch()
+
+    validate_command([str(chrome), "https://example.org"], internal=True)
+
+    with pytest.raises(PermissionError, match="not whitelisted"):
+        validate_command([str(chrome), "https://example.org"])
+
+
+def test_magnifier_is_allowed_only_for_internal_startup():
+    validate_command(["magnify.exe"], internal=True)
+
+    with pytest.raises(PermissionError, match="not whitelisted"):
+        validate_command(["magnify.exe"])
+
+
+def test_guarded_popen_starts_internal_chrome(monkeypatch, tmp_path):
+    import subprocess
+
+    from core import guardrails
+
+    chrome = tmp_path / "chrome.exe"
+    chrome.touch()
+    calls = []
+
+    monkeypatch.setattr(
+        subprocess,
+        "_original_popen",
+        lambda command, **kwargs: calls.append((command, kwargs)) or "started",
+        raising=False,
+    )
+
+    result = guardrails.guarded_popen(
+        [str(chrome), "https://example.org"],
+        stdout=subprocess.DEVNULL,
+    )
+
+    assert result == "started"
+    assert calls == [
+        ([str(chrome), "https://example.org"], {"stdout": subprocess.DEVNULL})
+    ]

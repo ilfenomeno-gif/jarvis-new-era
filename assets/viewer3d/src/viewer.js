@@ -7,7 +7,7 @@ import { RGBELoader } from "three/examples/jsm/loaders/RGBELoader.js";
 import * as RAPIER from "@dimforge/rapier3d-compat";
 
 const state = {
-  markers: [], target: null, spin: true, ready: false, flights: null,
+  markers: [], target: null, spin: false, ready: false, flights: null,
   model: null, modelStatus: "none", modelError: "", shaderError: "", partInfo: {},
   style: "hologram", controlsOn: true,
 };
@@ -116,7 +116,7 @@ try {
   renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, stencil: true });
   renderer.setClearColor(0x000308, 1);
   renderer.localClippingEnabled = true;
-  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.enabled = false;
   renderer.shadowMap.type = THREE.PCFSoftShadowMap;
   renderer.debug.onShaderError = () => { state.shaderError = "shader compile failed"; };
 } catch (e) {
@@ -128,8 +128,7 @@ const clipCapsScene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
 camera.position.set(0, 0, 4.2);
 
-// Drag = rotate, wheel = zoom, right button = pan. Only active while a model is shown
-// (the globe is driven by flyTo/spin) and while setControls(true) is in effect.
+// Drag = rotate, wheel = zoom, right button = pan; controls require a loaded model.
 const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true;
 controls.dampingFactor = 0.12;
@@ -147,6 +146,7 @@ function resetCamera() {
 const globe = new THREE.Group();
 scene.add(globe);
 const cyan = 0x00d4ff;
+const HUD_PARTICLE_MAX = 100;
 const hudAnimation = {
   state: "idle", color: new THREE.Color(cyan), fromColor: new THREE.Color(cyan),
   targetColor: new THREE.Color(cyan), ringSpeed: 0.55, fromRingSpeed: 0.55,
@@ -155,7 +155,7 @@ const hudAnimation = {
   duration: 0.3,
 };
 
-// Only the solid styles (blueprint, realistic) are lit; globe and hologram are unlit.
+// Only the solid styles (blueprint, realistic) are lit.
 const hemiLight = new THREE.HemisphereLight(0xcfe8ff, 0x10203a, 1.6);
 scene.add(hemiLight);
 const keyLight = new THREE.DirectionalLight(0xffffff, 2.4);
@@ -189,6 +189,47 @@ function disposeObject(root) {
     if (o.geometry) o.geometry.dispose();
     [].concat(o.material || [], (o.userData && o.userData.base) || [], (o.userData && o.userData.orig) || [])
       .forEach(disposeMaterial);
+  });
+}
+
+const MAX_MODEL_TEXTURE_SIZE = 1024;
+function constrainModelTextures(root) {
+  const resizedImages = new WeakMap();
+  root.traverse((object) => {
+    [].concat(object.material || []).forEach((material) => {
+      if (!material) return;
+      TEXTURE_SLOTS.forEach((slot) => {
+        const texture = material[slot];
+        if (!texture || !texture.isTexture || texture.isDataTexture || texture.isCompressedTexture) return;
+        const image = texture.image;
+        if (!image || typeof image !== "object") return;
+        const width = image.naturalWidth || image.videoWidth || image.width || 0;
+        const height = image.naturalHeight || image.videoHeight || image.height || 0;
+        if (!width || !height || Math.max(width, height) <= MAX_MODEL_TEXTURE_SIZE) return;
+        let resized = resizedImages.get(image);
+        if (!resized) {
+          const scale = MAX_MODEL_TEXTURE_SIZE / Math.max(width, height);
+          const canvas = document.createElement("canvas");
+          canvas.width = Math.max(1, Math.round(width * scale));
+          canvas.height = Math.max(1, Math.round(height * scale));
+          const context = canvas.getContext("2d");
+          if (!context) {
+            console.warn("Could not downscale model texture: 2D canvas unavailable");
+            return;
+          }
+          try {
+            context.drawImage(image, 0, 0, canvas.width, canvas.height);
+          } catch (error) {
+            console.warn("Could not downscale model texture", error);
+            return;
+          }
+          resized = canvas;
+          resizedImages.set(image, resized);
+        }
+        texture.image = resized;
+        texture.needsUpdate = true;
+      });
+    });
   });
 }
 
@@ -245,6 +286,7 @@ function loadEnvironment() {
 function syncLook() {
   if (!renderer) return;
   const realistic = !!state.model && state.model.style === "realistic";
+  renderer.shadowMap.enabled = realistic;
   if (realistic) loadEnvironment();
   // Only dim the stage lights once the HDRI is really there to replace them.
   const hdriLit = realistic && !!envMap;
@@ -269,47 +311,6 @@ function syncLook() {
   }
 }
 
-const coreGlow = new THREE.Mesh(
-  new THREE.SphereGeometry(1.16, 32, 24),
-  new THREE.MeshBasicMaterial({
-    color: cyan, transparent: true, opacity: 0.025,
-    blending: THREE.AdditiveBlending, depthWrite: false,
-  })
-);
-globe.add(coreGlow);
-const sphereMaterial = new THREE.MeshBasicMaterial({
-  color: cyan, wireframe: true, transparent: true, opacity: 0.18,
-});
-const sphere = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 32), sphereMaterial);
-globe.add(sphere);
-const coreMaterial = new THREE.MeshBasicMaterial({
-  color: 0x001018, transparent: true, opacity: 0.85,
-});
-globe.add(new THREE.Mesh(new THREE.SphereGeometry(0.985, 32, 24), coreMaterial));
-
-const HUD_PARTICLE_MAX = 100;
-const hudParticleGeometry = new THREE.BufferGeometry();
-hudParticleGeometry.setAttribute(
-  "position", new THREE.BufferAttribute(new Float32Array(HUD_PARTICLE_MAX * 3), 3)
-);
-const hudParticleMaterial = new THREE.PointsMaterial({
-  color: cyan, size: 0.035, transparent: true, opacity: 0.85,
-  blending: THREE.AdditiveBlending, depthWrite: false,
-});
-const hudParticles = new THREE.Points(hudParticleGeometry, hudParticleMaterial);
-globe.add(hudParticles);
-
-const rings = [];
-for (let i = 0; i < 3; i++) {
-  const ring = new THREE.Mesh(
-    new THREE.RingGeometry(1.25 + i * 0.12, 1.26 + i * 0.12, 128),
-    new THREE.MeshBasicMaterial({ color: cyan, transparent: true, opacity: 0.35 - i * 0.08, side: THREE.DoubleSide })
-  );
-  ring.rotation.x = Math.PI / 2.3 + i * 0.25;
-  scene.add(ring);
-  rings.push(ring);
-}
-
 function toVec(lat, lon, r) {
   const phi = (90 - lat) * Math.PI / 180;
   const theta = (lon + 180) * Math.PI / 180;
@@ -322,7 +323,10 @@ function toVec(lat, lon, r) {
 
 function resize() {
   const w = canvas.clientWidth || 1, h = canvas.clientHeight || 1;
-  if (renderer) renderer.setSize(w, h, false);
+  if (renderer) {
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+    renderer.setSize(w, h, false);
+  }
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
 }
@@ -483,7 +487,9 @@ function renderClippedScene() {
 }
 
 let last = performance.now();
+let animationFrame = 0;
 function frame(now) {
+  animationFrame = 0;
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
   updateHudAnimation(now);
@@ -495,8 +501,6 @@ function frame(now) {
   } else if (state.spin) {
     globe.rotation.y += dt * 0.25;
   }
-  rings.forEach((r, i) => { r.rotation.z += dt * (0.2 + i * 0.1) * hudAnimation.ringSpeed; });
-  updateHudParticles(now);
   if (state.model && state.model.holo.length) {
     state.model.holo.forEach(m => { m.uniforms.uTime.value = now / 1000; });
   }
@@ -511,8 +515,24 @@ function frame(now) {
   pickPart(now);
   if (controls.enabled) controls.update();
   if (renderer) renderClippedScene();
-  requestAnimationFrame(frame);
+  scheduleFrame();
 }
+
+function scheduleFrame() {
+  if (!animationFrame && document.visibilityState === "visible") {
+    animationFrame = requestAnimationFrame(frame);
+  }
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") {
+    cancelAnimationFrame(animationFrame);
+    animationFrame = 0;
+  } else {
+    last = performance.now();
+    scheduleFrame();
+  }
+});
 
 function updateHudAnimation(now) {
   const progress = hudAnimation.duration <= 0
@@ -522,28 +542,6 @@ function updateHudAnimation(now) {
   hudAnimation.ringSpeed = THREE.MathUtils.lerp(hudAnimation.fromRingSpeed, hudAnimation.targetRingSpeed, eased);
   hudAnimation.glow = THREE.MathUtils.lerp(hudAnimation.fromGlow, hudAnimation.targetGlow, eased);
   hudAnimation.particles = THREE.MathUtils.lerp(hudAnimation.fromParticles, hudAnimation.targetParticles, eased);
-  sphereMaterial.color.copy(hudAnimation.color);
-  coreMaterial.color.copy(hudAnimation.color).multiplyScalar(0.06);
-  coreGlow.material.color.copy(hudAnimation.color);
-  coreGlow.material.opacity = Math.min(0.12, 0.025 * hudAnimation.glow);
-  hudParticleMaterial.color.copy(hudAnimation.color);
-  hudParticleMaterial.opacity = Math.min(1, 0.55 + hudAnimation.glow * 0.2);
-}
-
-function updateHudParticles(now) {
-  const count = Math.min(HUD_PARTICLE_MAX, Math.max(0, Math.round(hudAnimation.particles)));
-  const positions = hudParticleGeometry.attributes.position;
-  const time = now / 1000;
-  for (let i = 0; i < count; i++) {
-    const phase = i * 2.399963;
-    const orbit = time * (0.25 + hudAnimation.ringSpeed * 0.12) + phase;
-    const latitude = Math.sin(phase * 1.7 + time * 0.18) * 0.82;
-    const radius = 1.12 + 0.16 * Math.sin(phase + time * 0.8);
-    const planar = Math.sqrt(1 - latitude * latitude);
-    positions.setXYZ(i, Math.cos(orbit) * planar * radius, latitude * radius, Math.sin(orbit) * planar * radius);
-  }
-  positions.needsUpdate = count > 0;
-  hudParticleGeometry.setDrawRange(0, count);
 }
 
 function num(v, lo, hi, name) {
@@ -849,7 +847,7 @@ window.jarvisViewer = {
     state.markers.push({ lat, lon, label: String(label || "").slice(0, 60), obj: dot });
   },
   clearMarkers() {
-    state.markers.forEach(m => globe.remove(m.obj));
+    state.markers.forEach(m => { globe.remove(m.obj); disposeObject(m.obj); });
     state.markers = [];
   },
   setFlights(list) {
@@ -865,7 +863,7 @@ window.jarvisViewer = {
     state.flights = { obj: pts, list: list.map(f => ({ lat: f[0], lon: f[1], callsign: f[2] })) };
   },
   clearFlights() {
-    if (state.flights) { globe.remove(state.flights.obj); state.flights.obj.geometry.dispose(); }
+    if (state.flights) { globe.remove(state.flights.obj); disposeObject(state.flights.obj); }
     state.flights = null;
   },
   setHudState(name, color, ringSpeed, glow, particles, transitionSeconds) {
@@ -897,6 +895,7 @@ window.jarvisViewer = {
       (gltf) => {
         if (token !== loadToken) { disposeObject(gltf.scene); return; }
         const root = gltf.scene;
+        constrainModelTextures(root);
         const box = new THREE.Box3().setFromObject(root);
         const size = box.getSize(new THREE.Vector3());
         const scale = 1.6 / (Math.max(size.x, size.y, size.z) || 1);
@@ -925,7 +924,6 @@ window.jarvisViewer = {
         state.modelStatus = "ready";
         syncControls();
         globe.visible = false;
-        rings.forEach(r => { r.visible = false; });
       },
       undefined,
       (err) => {
@@ -1045,7 +1043,6 @@ window.jarvisViewer = {
     resetCamera();
     hideTip();
     globe.visible = true;
-    rings.forEach(r => { r.visible = true; });
   },
   spin(on) { state.spin = !!on && !clip.axis; if (on && !clip.axis) state.target = null; },
   setControls(active) {
@@ -1129,4 +1126,4 @@ if (boot) {
   if (renderer) boot.remove();
   else boot.textContent = "WebGL non disponibile";
 }
-requestAnimationFrame(frame);
+scheduleFrame();

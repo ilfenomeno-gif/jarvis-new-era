@@ -1,12 +1,18 @@
 # ── Secrets — never commit ───────────────────────────────────────────────
 config/api_keys.json
+config/user_profile.json
+config/clipboard_history.json
 config/voice_settings.json
 config/n8n.json
 config/secrets.json
 config/ui_layout.json
+config/notes.json
 config/certs/
 *.pem
 *.key
+.env
+.env.*
+!.env.example
 .env.local
 
 # ── Python ───────────────────────────────────────────────────────────────

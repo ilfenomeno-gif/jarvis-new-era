@@ -29,7 +29,12 @@ TOOL = {
     "name": "connector_call",
     "description": (
         "Calls a namespaced connector tool (for example 'calendar.list_events'). "
-        "Only works for connected connectors with the needed scope granted."),
+        "Only works for connected connectors with the needed scope granted. "
+        "For gmail.search, arguments_json accepts query and max_results; "
+        "use query '-in:sent' and max_results 1 for the latest received email. "
+        "For GitHub repository searches, provide a non-empty query to "
+        "github.search_repositories; for repositories owned by the authenticated "
+        "account, use github_user_repositories instead of search_repositories."),
     "risk_class": "write",
     "parameters": {
         "type": "OBJECT",

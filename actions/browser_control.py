@@ -9,6 +9,7 @@ import platform
 import shutil
 import subprocess
 import threading
+import time
 import webbrowser
 from datetime import UTC, datetime
 from pathlib import Path
@@ -1009,6 +1010,93 @@ class _SessionRegistry:
 
 
 _registry = _SessionRegistry()
+_magnifier_process: subprocess.Popen | None = None
+_magnifier_lock = threading.Lock()
+
+def _activate_chrome_window() -> None:
+    """Focus a Chrome window before sending a keyboard shortcut to it."""
+    try:
+        import pygetwindow
+    except ImportError as exc:
+        raise RuntimeError(
+            "Chrome zoom requires pygetwindow. Install it with `pip install pygetwindow`."
+        ) from exc
+
+    windows = [
+        window
+        for window in pygetwindow.getWindowsWithTitle("Chrome")
+        if "chrome" in window.title.casefold()
+    ]
+    if not windows:
+        raise RuntimeError("No open Google Chrome window was found.")
+
+    window = windows[0]
+    if window.isMinimized:
+        window.restore()
+    window.activate()
+    time.sleep(0.5)
+
+    active_window = pygetwindow.getActiveWindow()
+    if active_window is None or "chrome" not in active_window.title.casefold():
+        raise RuntimeError("Could not bring Google Chrome to the foreground.")
+
+
+def _send_chrome_zoom(direction: str) -> str:
+    shortcuts = {
+        "in": ("ctrl", "+"),
+        "out": ("ctrl", "-"),
+        "reset": ("ctrl", "0"),
+    }
+    if direction not in shortcuts:
+        raise ValueError(f"Unsupported Chrome zoom direction: {direction}")
+
+    try:
+        import pyautogui
+    except ImportError as exc:
+        raise RuntimeError(
+            "Chrome zoom requires pyautogui. Install it with `pip install pyautogui`."
+        ) from exc
+
+    _activate_chrome_window()
+    pyautogui.hotkey(*shortcuts[direction])
+    return {
+        "in": "Chrome zoom increased.",
+        "out": "Chrome zoom decreased.",
+        "reset": "Chrome zoom reset.",
+    }[direction]
+
+
+def _control_windows_magnifier(enabled: bool) -> str:
+    global _magnifier_process
+
+    if _OS != "Windows":
+        raise RuntimeError("The Windows screen magnifier is only available on Windows.")
+    with _magnifier_lock:
+        if enabled:
+            if _magnifier_process is not None and _magnifier_process.poll() is None:
+                return "Windows Magnifier is already running."
+            _magnifier_process = subprocess.Popen(
+                ["magnify.exe"],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            return "Windows Magnifier activated."
+
+        process, _magnifier_process = _magnifier_process, None
+        if process is None or process.poll() is not None:
+            return (
+                "Windows Magnifier was not started by Jarvis; "
+                "left other Magnifier instances untouched."
+            )
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+        return "Windows Magnifier closed."
+
 
 def browser_control(
     parameters:    dict = None,
@@ -1034,6 +1122,22 @@ def browser_control(
 
     if action == "close_all":
         result = _registry.close_all()
+        _log(player, result)
+        return result
+
+    if action in {"zoom_in", "zoom_out", "zoom_reset"}:
+        try:
+            result = _send_chrome_zoom(action.removeprefix("zoom_"))
+        except Exception as exc:
+            result = f"Browser error ({action}): {type(exc).__name__}: {exc}"
+        _log(player, result)
+        return result
+
+    if action in {"magnifier_on", "magnifier_off"}:
+        try:
+            result = _control_windows_magnifier(action == "magnifier_on")
+        except Exception as exc:
+            result = f"Screen magnifier error: {type(exc).__name__}: {exc}"
         _log(player, result)
         return result
 
@@ -1182,7 +1286,11 @@ def read_active_page(
 
     # ── Fall back to visual screenshot + Gemini ───────────────────────────────
     try:
-        from actions.screen_processor import _capture_screen, _get_api_key
+        from actions.screen_processor import (
+            GEMINI_VISION_MODEL,
+            _capture_screen,
+            _get_api_key,
+        )
         from google import genai
         from google.genai import types as gtypes
         import io
@@ -1192,7 +1300,7 @@ def read_active_page(
         img = PIL.Image.open(io.BytesIO(image_bytes))
         client = genai.Client(api_key=_get_api_key())
         response_obj = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model=GEMINI_VISION_MODEL,
             contents=[img, question],
             config=gtypes.GenerateContentConfig(temperature=0.2),
         )

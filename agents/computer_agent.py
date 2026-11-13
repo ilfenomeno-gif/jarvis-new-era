@@ -3,12 +3,10 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
-from core.browser_automation import BrowserAutomation
-from core.computer_input import ComputerInput
-from core.computer_vision import ComputerVision
+from capabilities.computer import DesktopInput, ScreenVision, WebSearch
 
 
 @dataclass(frozen=True)
@@ -36,14 +34,14 @@ _LOCAL_TYPE = re.compile(
 class ComputerAgent:
     def __init__(
         self,
-        vision: ComputerVision | None = None,
-        computer_input: ComputerInput | None = None,
-        browser: BrowserAutomation | None = None,
+        vision: ScreenVision,
+        computer_input: DesktopInput,
+        browser: WebSearch,
         before_local_action: Callable[[], None] | None = None,
     ) -> None:
-        self.vision = vision or ComputerVision()
-        self.computer_input = computer_input or ComputerInput()
-        self.browser = browser or BrowserAutomation()
+        self.vision = vision
+        self.computer_input = computer_input
+        self.browser = browser
         self.before_local_action = before_local_action
 
     def execute_task(self, task: str) -> ComputerTaskResult:

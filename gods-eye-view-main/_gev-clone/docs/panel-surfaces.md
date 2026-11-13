@@ -57,12 +57,12 @@ fit when those contents should instead scroll.
 
 ## Placement and ownership
 
-| Mount                                 | Shared contract                                                                                     | Owner responsibilities                                                                                                                                                                                   |
-| ------------------------------------- | --------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Mount                                 | Shared contract                                                                                                                 | Owner responsibilities                                                                                                                                                                                   |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Direct child of `#left-panel-stack`   | An owner with a direct `[data-panel-surface]` child receives relative positioning and allocated height; inner surface/body skin | Add the wrapper shown above, use the existing layout/disclosure owners, and retain left-rail focus/auto-collapse rules.                                                                                  |
-| Direct child of `#right-context-rail` | The same hooks with right-rail allocation and intrinsic measurement                                 | Keep `data-rail-scroller` on the body so measurement preserves its scroll position. Respect Cyber's one-expanded-panel policy.                                                                           |
-| Surface inside `#command-dock`        | Surface, controls, popup decoration and inherited dock concealment                                  | Supply geometry, stacking, disclosure, pin behavior if wanted, safe viewport bounds and dismissal. This CSS does not extend the existing Location/Visual Presets tray stack manager to arbitrary panels. |
-| `dialog[data-panel-surface]`          | The same surface/body skin; a closed dialog remains hidden                                          | Set width/max-height, use `showModal()` or `show()` and `close()`, and own labels, initial/return focus and dismissal. Do not put `panel-collapsible` on a dialog.                                       |
+| Direct child of `#right-context-rail` | The same hooks with right-rail allocation and intrinsic measurement                                                             | Keep `data-rail-scroller` on the body so measurement preserves its scroll position. Respect Cyber's one-expanded-panel policy.                                                                           |
+| Surface inside `#command-dock`        | Surface, controls, popup decoration and inherited dock concealment                                                              | Supply geometry, stacking, disclosure, pin behavior if wanted, safe viewport bounds and dismissal. This CSS does not extend the existing Location/Visual Presets tray stack manager to arbitrary panels. |
+| `dialog[data-panel-surface]`          | The same surface/body skin; a closed dialog remains hidden                                                                      | Set width/max-height, use `showModal()` or `show()` and `close()`, and own labels, initial/return focus and dismissal. Do not put `panel-collapsible` on a dialog.                                       |
 
 For rails, `--panel-expanded-width` and `--panel-collapsed-width` customize
 the desired widths within the rail; otherwise Cyber uses its existing left,
@@ -109,6 +109,18 @@ Cockpit-specific mounting still require deliberate integration with their
 current owners. This contract does not add entries to named persistence, dock,
 Cockpit or share-state policies. Dispose listeners, observers and timers,
 dismiss open popups/dialogs and restore focus before removing a dynamic panel.
+
+## Panel visibility dots
+
+The always-visible `#panel-visibility-dock` provides one dot for each standard
+GEV panel, including navigation, location, data layers, CCTV, scenes, display,
+context, radio, weather and recent imagery. A hollow dot hides that panel
+without unmounting it; selecting the dot restores it. Visibility is stored
+separately from collapsed state in
+`godsEyeView.v1.hiddenPanels`. Explicitly opening a hidden panel through the
+application panel controller also restores its visibility. Add new standard
+panels to `PANEL_VISIBILITY_SPECS` in `src/ui/panelVisibilityDock.js` and keep
+rail layout filters aware of `panel-dot-hidden`.
 
 ## Decoration, popups and visibility
 

@@ -49,9 +49,11 @@ class BrowserBackend(Protocol):
     def get_text(self, selector: str) -> str: ...
     def get_input_value(self, selector: str) -> str: ...
     def go_back(self) -> str: ...
+    def set_zoom(self, direction: str) -> str: ...
     def wait_for(self, selector: str, timeout_ms: int) -> None: ...
     def screenshot(self, path: str) -> None: ...
     def video_control(self, selector: str, control: str, value: float | None) -> dict: ...
+    def play_youtube_video(self, query: str) -> str: ...
     def select_text(self, selector: str) -> None: ...
     def copy_selection(self) -> str: ...
     def paste_text(self, selector: str, text: str) -> None: ...
@@ -93,6 +95,7 @@ class PlaywrightBrowser:
         self._browser: Any = None
         self._context: Any = None
         self._page: Any = None
+        self._zoom_percent = 100
 
     def start(self) -> None:
         if self._page is not None:
@@ -123,7 +126,10 @@ class PlaywrightBrowser:
         return self._page
 
     def navigate(self, url: str) -> Any:
-        return self._require_page().goto(_validate_url(url), wait_until="domcontentloaded")
+        page = self._require_page()
+        result = page.goto(_validate_url(url), wait_until="domcontentloaded")
+        self._apply_zoom(page)
+        return result
 
     def find_element(self, selector: str) -> Any | None:
         if not isinstance(selector, str) or not selector.strip():
@@ -216,6 +222,30 @@ class PlaywrightBrowser:
         page.go_back(wait_until="domcontentloaded")
         return page.url
 
+    def set_zoom(self, direction: str) -> str:
+        if direction not in {"in", "out", "reset"}:
+            raise ValueError("Zoom direction must be 'in', 'out', or 'reset'.") from None
+        if direction == "in":
+            self._zoom_percent = min(500, self._zoom_percent + 10)
+        elif direction == "out":
+            self._zoom_percent = max(25, self._zoom_percent - 10)
+        else:
+            self._zoom_percent = 100
+        self._apply_zoom(self._require_page())
+        return direction
+
+    def _apply_zoom(self, page: Any) -> None:
+        page.evaluate(
+            """percent => {
+                if (percent === 100) {
+                    document.documentElement.style.removeProperty("zoom");
+                } else {
+                    document.documentElement.style.setProperty("zoom", `${percent}%`, "important");
+                }
+            }""",
+            self._zoom_percent,
+        )
+
     def wait_for(self, selector: str, timeout_ms: int) -> None:
         if isinstance(timeout_ms, bool) or not isinstance(timeout_ms, int) or timeout_ms <= 0:
             raise ValueError("timeout_ms must be a positive integer.")
@@ -276,6 +306,22 @@ class PlaywrightBrowser:
             }""",
             {"control": control, "value": value},
         )
+
+    def play_youtube_video(self, query: str) -> str:
+        if not isinstance(query, str) or not query.strip():
+            raise ValueError("YouTube search query must be non-empty text.")
+        from urllib.parse import quote_plus
+
+        page = self._require_page()
+        page.goto(
+            "https://www.youtube.com/results?search_query="
+            + quote_plus(query.strip()[:300]),
+            wait_until="domcontentloaded",
+        )
+        first_result = page.locator("a#video-title").first
+        first_result.wait_for(state="visible", timeout=self.timeout_ms)
+        first_result.click()
+        return page.url
 
     def copy_selection(self) -> str:
         return self._require_page().evaluate(
@@ -424,6 +470,12 @@ class MockBrowser:
         self.actions.append(("go_back",))
         return self.get_url()
 
+    def set_zoom(self, direction: str) -> str:
+        if direction not in {"in", "out", "reset"}:
+            raise ValueError("Zoom direction must be 'in', 'out', or 'reset'.")
+        self.actions.append(("set_zoom", direction))
+        return direction
+
     def wait_for(self, selector: str, timeout_ms: int) -> None:
         if self.find_element(selector) is None:
             raise LookupError(f"Browser element not found: {selector}")
@@ -453,6 +505,20 @@ class MockBrowser:
         elif control == "fullscreen":
             self.video_state["fullscreen"] = True
         return dict(self.video_state)
+
+    def play_youtube_video(self, query: str) -> str:
+        if not self.started:
+            raise RuntimeError("Browser is not started.")
+        if not isinstance(query, str) or not query.strip():
+            raise ValueError("YouTube search query must be non-empty text.")
+        url = (
+            "https://www.youtube.com/results?search_query="
+            + query.strip().replace(" ", "+")
+        )
+        self.navigations.append(url)
+        self.current_url = url
+        self.actions.append(("play_youtube_video", query.strip()))
+        return url
 
     def copy_selection(self) -> str:
         return self.selection_text
@@ -534,6 +600,11 @@ class BrowserAutomation:
     def go_back(self) -> str:
         return self._call(self.backend.go_back)
 
+    def set_zoom(self, direction: str) -> str:
+        if direction not in {"in", "out", "reset"}:
+            raise ValueError("Zoom direction must be 'in', 'out', or 'reset'.")
+        return self._call(self.backend.set_zoom, direction)
+
     def wait_for(self, selector: str, timeout_ms: int = 5000) -> None:
         if not isinstance(selector, str) or not selector.strip():
             raise ValueError("selector must be non-empty text.")
@@ -555,6 +626,14 @@ class BrowserAutomation:
         value: float | None = None,
     ) -> dict:
         return self._call(self.backend.video_control, selector, control, value)
+
+    def play_youtube_video(self, query: str) -> str:
+        if not isinstance(query, str) or not query.strip() or len(query) > 300:
+            raise ValueError("YouTube query must contain between 1 and 300 characters.")
+        method = getattr(self.backend, "play_youtube_video", None)
+        if not callable(method):
+            raise RuntimeError("The configured browser does not support YouTube playback.")
+        return self._call(method, query.strip())
 
     def copy_selection(self) -> str:
         return self._call(self.backend.copy_selection)

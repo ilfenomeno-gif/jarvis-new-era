@@ -21,14 +21,12 @@ class _McpClient:
         self.calls.append((name, arguments))
         return {
             "structuredContent": {
-                "summary": "Open Waterloo in God's Eye View",
-                "data": {
-                    "view": {
-                        "camera": {
-                            "lat": 50.6800,
-                            "lon": 4.4100,
-                            "altitude_m": 25000,
-                        }
+                "url": "http://127.0.0.1:4173/#v=2&lat=50.68&lon=4.41",
+                "view": {
+                    "camera": {
+                        "lat": 50.6800,
+                        "lon": 4.4100,
+                        "altitude_m": 25000,
                     }
                 },
             }
@@ -312,15 +310,15 @@ def test_start_runtime_reports_exit_code_and_vite_output(
     isolated_gev_runtime, monkeypatch
 ):
     terminated = isolated_gev_runtime
+    popen_kwargs = {}
     monkeypatch.setattr(
         gev_plugin.socket,
         "create_connection",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("connection refused")),
     )
-    monkeypatch.setattr(
-        gev_plugin.subprocess,
-        "Popen",
-        lambda *_args, **_kwargs: type(
+    def fake_popen(*_args, **kwargs):
+        popen_kwargs.update(kwargs)
+        return type(
             "ExitedProcess",
             (),
             {
@@ -330,8 +328,9 @@ def test_start_runtime_reports_exit_code_and_vite_output(
                 ),
                 "poll": lambda self: 1,
             },
-        )(),
-    )
+        )()
+
+    monkeypatch.setattr(gev_plugin.subprocess, "Popen", fake_popen)
 
     with pytest.raises(RuntimeError) as exc_info:
         gev_plugin._start_runtime()
@@ -341,5 +340,7 @@ def test_start_runtime_reports_exit_code_and_vite_output(
     assert "stdout/stderr:" in message
     assert "Error when starting dev server" in message
     assert "Port 4173 is already in use" in message
+    assert popen_kwargs["encoding"] == "utf-8"
+    assert popen_kwargs["errors"] == "replace"
     assert len(terminated) == 1
     assert gev_plugin._process is None

@@ -86,6 +86,37 @@ def test_scopes_persist_and_calls_are_audited(env):
     assert again.scopes.granted("github") == {"repo.read"}
 
 
+def test_set_connector_scopes_replaces_and_persists_checkbox_state(env):
+    secrets, audit, connectors, tmp_path = env
+
+    connectors.set_scopes("github", ["repo.read"])
+    connectors.set_scopes("github", [])
+
+    reloaded = ConnectorRegistry(
+        tmp_path / "connectors.json",
+        secrets,
+        audit,
+    )
+    reloaded.load_catalog(ROOT / "connectors" / "catalog")
+    assert reloaded.scopes.granted("github") == set()
+
+    with pytest.raises(ConnectorError, match="undeclared scopes"):
+        connectors.set_scopes("github", ["admin"])
+
+
+def test_github_repository_search_requires_nonempty_query(env):
+    _, _, connectors, _ = env
+
+    with pytest.raises(
+        ConnectorError,
+        match="Specifica una query di ricerca.*github_user_repositories",
+    ):
+        connectors.call_tool("github.search_repositories", {})
+
+    with pytest.raises(ConnectorError, match="github_user_repositories"):
+        connectors.call_tool("github.search_repositories", {"q": "  "})
+
+
 def test_descriptor_rejects_undeclared_scope():
     with pytest.raises(ConnectorError):
         ConnectorDescriptor.from_dict({

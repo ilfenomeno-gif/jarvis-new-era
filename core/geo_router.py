@@ -22,6 +22,12 @@ _GEO_LOCATION = re.compile(
     r"(?:il|la|lo)\s+|l['’]\s*)?(?P<location>.+)$",
     re.IGNORECASE,
 )
+_NAVIGATE_LOCATION = re.compile(
+    r"^(?:per\s+favore\s+)?(?:vai|portami|spostati|vola|naviga)\s+"
+    r"(?:(?:a|verso|su|in)\s+)?"
+    r"(?P<location>.+)$",
+    re.IGNORECASE,
+)
 _HISTORY_LOCATION = re.compile(
     r"(?:battaglia|storia|assedio|rivoluzione|guerra|caduta|impero|"
     r"massacro|trattato|conquista)\s+"
@@ -64,7 +70,12 @@ def classify_and_route(query: str) -> dict:
         }
 
     query = query.strip()
-    intent = classify_geo_history_intent(query)
+    navigate_match = _NAVIGATE_LOCATION.search(query)
+    intent = (
+        "geo"
+        if navigate_match is not None
+        else classify_geo_history_intent(query)
+    )
     if intent == "none":
         return {
             "intent": "none",
@@ -77,7 +88,7 @@ def classify_and_route(query: str) -> dict:
     location_match = (
         _HISTORY_LOCATION.search(query) or _HISTORY_PERSON.search(query)
         if intent == "history"
-        else _GEO_LOCATION.search(query)
+        else navigate_match or _GEO_LOCATION.search(query)
     )
     location = (
         _clean_location(location_match.group("location"))

@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import threading
 import time
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Optional
@@ -55,22 +56,40 @@ class _Pending:
     run:     Callable[[], str]
     at:      float
     on_cancel: Callable[[], None] | None = None
+    process_voice: bool = False
+    ready: bool = False
+    token: str = ""
 
 
 _pending: Optional[_Pending] = None
 _lock = threading.Lock()
 
-# Set once at startup by main.py. Signature: (title, detail) -> None for show,
-# and () -> None for hide. Both are marshalled onto the Qt thread by the UI.
-_show_cb: Optional[Callable[[str, str], None]] = None
-_hide_cb: Optional[Callable[[], None]] = None
+# Legacy callbacks accept (title, detail) and (); keyed callbacks receive the
+# confirmation token first. The UI marshals both onto the Qt thread.
+_show_cb: Optional[Callable[..., None]] = None
+_hide_cb: Optional[Callable[..., None]] = None
 _log_cb:  Optional[Callable[[str], None]] = None
+_keyed_bind = False
 
 
-def bind(show, hide, log=None) -> None:
+def bind(show, hide, log=None, *, keyed: bool = False) -> None:
     """Wire this module to the HUD. Called once from main.py at startup."""
-    global _show_cb, _hide_cb, _log_cb
-    _show_cb, _hide_cb, _log_cb = show, hide, log
+    global _show_cb, _hide_cb, _log_cb, _keyed_bind
+    with _lock:
+        if _pending is not None:
+            raise RuntimeError("Cannot rebind while a confirmation is pending")
+        _show_cb, _hide_cb, _log_cb = show, hide, log
+        _keyed_bind = keyed is True and callable(show) and callable(hide)
+
+
+def keyed_interface_active() -> bool:
+    with _lock:
+        return _keyed_bind and _show_cb is not None and _hide_cb is not None
+
+
+def is_current(token: str) -> bool:
+    with _lock:
+        return _keyed_bind and _pending is not None and _pending.token == token
 
 
 def _log(msg: str) -> None:
@@ -88,6 +107,7 @@ def request(
     run: Callable[[], str],
     *,
     on_cancel: Callable[[], None] | None = None,
+    process_voice: bool = False,
 ) -> str:
     """Park an irreversible action behind the on-screen gate.
 
@@ -103,17 +123,35 @@ def request(
                 f"not available, so I have not done it.")
 
     with _lock:
+        if _pending is not None:
+            return "Another confirmation is already pending; nothing was done."
         _pending = _Pending(key=key, title=title, detail=detail,
-                            run=run, at=time.monotonic(), on_cancel=on_cancel)
+                            run=run, at=time.monotonic(), on_cancel=on_cancel,
+                            process_voice=process_voice, token=uuid.uuid4().hex)
+        p = _pending
 
     try:
-        _show_cb(title, detail)
+        if _keyed_bind:
+            _show_cb(p.token, title, detail)
+        else:
+            _show_cb(title, detail)
     except Exception as e:
         with _lock:
-            _pending = None
+            if _pending is p:
+                _pending = None
         return f"Could not ask for confirmation: {e}. Nothing was done."
 
+    with _lock:
+        if _pending is p:
+            p.ready = True
     _log(f"SYS: Awaiting confirmation — {title}")
+    if process_voice and _keyed_bind:
+        return (
+            f"[CONFIRMATION_PENDING] Confirmation is on screen for: {title}. "
+            "Ask the user to confirm or cancel on the HUD or, if available, "
+            "speak a brief confirmation or cancellation after a pause. "
+            "Do not claim it is done."
+        )
     return (
         f"[CONFIRMATION_PENDING] I have put a confirmation on screen for: {title}. "
         f"Say ONE short sentence in the user's own language telling them you need "
@@ -121,7 +159,52 @@ def request(
     )
 
 
-def resolve(accepted: bool) -> None:
+def process_voice_candidate() -> tuple[str, float] | None:
+    """Return the identity of a currently pending process-only confirmation."""
+    with _lock:
+        p = _pending
+        if (
+            p is None
+            or not _keyed_bind
+            or not p.process_voice
+            or not p.ready
+            or time.monotonic() - p.at > TIMEOUT_SECONDS
+        ):
+            return None
+        return p.token, p.at
+
+
+def resolve_process_voice(key: str, accepted: bool, captured_at: float) -> bool:
+    """Consume only the process request bound to this post-request audio capture."""
+    global _pending
+
+    if (
+        not isinstance(key, str)
+        or not isinstance(captured_at, (int, float))
+        or isinstance(captured_at, bool)
+        or not isinstance(accepted, bool)
+    ):
+        return False
+    import math
+    if not math.isfinite(captured_at):
+        return False
+    with _lock:
+        p = _pending
+        if (
+            p is None or not _keyed_bind or not p.process_voice or not p.ready
+            or not p.key.startswith("process-master-") or p.token != key
+            or captured_at <= p.at
+            or captured_at > time.monotonic()
+            or time.monotonic() - p.at > TIMEOUT_SECONDS
+        ):
+            return False
+        _hide_locked(p)
+        _pending = None
+    _finish_resolution(p, accepted)
+    return True
+
+
+def resolve(accepted: bool, key: str | None = None) -> None:
     """Called by the UI when the user presses CONFIRM or CANCEL.
 
     Runs the stored callable on a worker thread — this is invoked from the Qt
@@ -130,14 +213,29 @@ def resolve(accepted: bool) -> None:
     global _pending
 
     with _lock:
-        p, _pending = _pending, None
+        p = _pending
+        if p is None or not p.ready or (
+            _keyed_bind and (not isinstance(key, str) or key != p.token)
+        ):
+            return
+        _hide_locked(p)
+        _pending = None
 
+    _finish_resolution(p, accepted)
+
+
+def _hide_locked(p: _Pending) -> None:
     if _hide_cb:
         try:
-            _hide_cb()
+            if _keyed_bind:
+                _hide_cb(p.token)
+            else:
+                _hide_cb()
         except Exception:
             pass
 
+
+def _finish_resolution(p: Optional[_Pending], accepted: bool) -> None:
     if p is None:
         return
 

@@ -25,6 +25,7 @@ WHY THIS IS CACHED
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 
@@ -80,11 +81,8 @@ _chosen_api: dict = {"input": None, "output": None}
 #      stream opens, every write returns success in ~0 ms, and nothing is ever
 #      heard. Same failure, one layer deeper.
 #
-# So this list is a preference, not a promise. Which API actually gets used is
-# decided below by _usable() (open it for real) and _transport_works() (does
-# audio actually move), per direction. On this platform that lands on
-# DirectSound for the microphone and MME for the speakers — a split that no
-# amount of reasoning would have produced.
+# The input preference is independent of output. Output prefers WASAPI with
+# shared-mode conversion; both directions still probe whether audio moves.
 _PREFERRED_APIS = {
     "Windows": ("directsound", "mme", "wasapi"),
     # macOS has only Core Audio, so there is nothing to disambiguate.
@@ -93,6 +91,32 @@ _PREFERRED_APIS = {
     # presents dozens of routing permutations of the same card.
     "Linux":   ("pulse", "pipewire", "jack", "alsa"),
 }
+
+
+def _api_preference_order(system: str) -> tuple[str, ...]:
+    """Return host API filters, honoring an opt-in Windows preference order."""
+    default = _PREFERRED_APIS.get(system, ())
+    configured = os.environ.get("JARVIS_AUDIO_HOST_API_ORDER")
+    if system != "Windows" or configured is None:
+        return default
+
+    requested = tuple(dict.fromkeys(
+        name.strip().lower() for name in configured.split(",") if name.strip()
+    ))
+    if not requested or any(name not in default for name in requested):
+        print(
+            "[Audio] Invalid JARVIS_AUDIO_HOST_API_ORDER; "
+            f"using default order: {','.join(default)}"
+        )
+        return default
+    return requested
+
+
+def _output_api_preference_order(system: str) -> tuple[str, ...]:
+    if system == "Windows" and os.environ.get("JARVIS_AUDIO_HOST_API_ORDER") is None:
+        return ("wasapi", "directsound", "mme")
+    return _api_preference_order(system)
+
 
 # ── "It opens" is not "it works" ─────────────────────────────────────────────
 #
@@ -116,18 +140,18 @@ _PROBE_SECONDS = {"output": 0.6, "input": 0.35}
 _probe_results: dict = {}
 
 
-def _transport_works(idx: int, kind: str, api_key) -> bool:
+def _transport_works(idx: int, kind: str, api_key, *, rate=None, cache=True) -> bool:
     """Does this host API actually move audio, or only pretend to?
 
     Probed once per API per direction and cached. Output writes silence, so the
     probe is inaudible; input reads and discards."""
-    if api_key in _probe_results:
+    if cache and api_key in _probe_results:
         return _probe_results[api_key]
 
     ok = False
     try:
         import sounddevice as sd
-        rate = _RATES.get(kind, 16000)
+        rate = rate or _RATES.get(kind, 16000)
         secs = _PROBE_SECONDS.get(kind, 0.5)
 
         # Each direction is probed the way main.py actually uses it. That is not
@@ -138,12 +162,21 @@ def _transport_works(idx: int, kind: str, api_key) -> bool:
             # main.py writes with stream.write() — a real sink is rate-limited
             # by the hardware clock, a fake one swallows the buffer instantly.
             st = sd.RawOutputStream(samplerate=rate, channels=1, dtype="int16",
-                                    blocksize=1024, device=idx)
-            st.start()
-            t0 = time.monotonic()
-            st.write(bytes(int(rate * secs) * 2))   # silence — inaudible
-            elapsed = time.monotonic() - t0
-            st.stop(); st.close()
+                                    blocksize=1024, device=idx,
+                                    extra_settings=output_extra_settings(idx))
+            started = False
+            try:
+                st.start()
+                started = True
+                t0 = time.monotonic()
+                st.write(bytes(int(rate * secs) * 2))
+                elapsed = time.monotonic() - t0
+            finally:
+                try:
+                    if started:
+                        st.stop()
+                finally:
+                    st.close()
             ok = elapsed > secs * 0.5
             if not ok:
                 print(f"[Audio] output: host API reports success but moves no "
@@ -169,7 +202,8 @@ def _transport_works(idx: int, kind: str, api_key) -> bool:
         print(f"[Audio] {kind} transport probe failed: {e}")
         ok = False
 
-    _probe_results[api_key] = ok
+    if cache:
+        _probe_results[api_key] = ok
     return ok
 
 
@@ -203,6 +237,7 @@ def configure(input_rate: int, output_rate: int) -> None:
     global _cache
     _RATES["input"]  = int(input_rate)
     _RATES["output"] = int(output_rate)
+    _probe_results.clear()
     with _cache_lock:
         _cache = None
 
@@ -225,7 +260,8 @@ def _usable(idx: int, kind: str) -> bool:
                                 callback=lambda *_a: None)
         else:
             st = sd.RawOutputStream(samplerate=rate, channels=1, dtype="int16",
-                                    blocksize=1024, device=idx)
+                                    blocksize=1024, device=idx,
+                                    extra_settings=output_extra_settings(idx))
         st.start()
         return True
     except Exception:
@@ -255,6 +291,91 @@ def _is_pseudo(name: str) -> bool:
     return any(tok in low for tok in _PSEUDO_DEVICES)
 
 
+def output_extra_settings(device):
+    """Enable shared-mode Windows mixer conversion for WASAPI output."""
+    if device is None:
+        return None
+    import sounddevice as sd
+    dev = sd.query_devices(device)
+    api = sd.query_hostapis(dev["hostapi"])
+    if "wasapi" in api["name"].lower():
+        return sd.WasapiSettings(auto_convert=True)
+    return None
+
+
+def select_output(name: str = "", *, sample_rate: int | None = None,
+                  exclude: tuple[int, ...] = ()):
+    """Choose a working Windows output, preferring the current default endpoint.
+
+    Device indices are resolved anew on every selection, rather than persisted.
+    Explicit user preferences are tried before falling back to the default.
+    Other platforms retain the existing selection behavior.
+    """
+    import platform
+    import sounddevice as sd
+
+    if platform.system() != "Windows":
+        return resolve(name, "output")
+
+    try:
+        devices = list(sd.query_devices())
+        apis = list(sd.query_hostapis())
+        try:
+            default = sd.query_devices(kind="output")
+        except sd.PortAudioError as exc:
+            print(f"[Audio] Dispositivo predefinito non disponibile: {exc}")
+            default = None
+
+        wanted = (name or "").strip()
+        if wanted == DEFAULT_LABEL:
+            wanted = ""
+        order = _output_api_preference_order("Windows")
+
+        def matches(left, right):
+            return bool(left and right) and (
+                left.casefold() == right.casefold()
+                or left[:24].casefold() == right[:24].casefold()
+            )
+
+        for requested in ((wanted, "") if wanted else ("",)):
+            for api_filter in order:
+                for api_index, api in enumerate(apis):
+                    if api_filter not in api.get("name", "").lower():
+                        continue
+                    candidates = [
+                        (idx, dev) for idx, dev in enumerate(devices)
+                        if idx not in exclude
+                        and dev.get("hostapi") == api_index
+                        and dev.get("max_output_channels", 0) > 0
+                        and dev.get("name")
+                        and not _is_pseudo(dev["name"])
+                    ]
+                    if requested:
+                        candidates = [(idx, dev) for idx, dev in candidates
+                                      if matches(dev["name"], requested)]
+                    else:
+                        default_idx = api.get("default_output_device", -1)
+                        default_name = default.get("name", "") if default else ""
+                        candidates.sort(key=lambda item: (
+                            item[0] != default_idx,
+                            not matches(item[1]["name"], default_name),
+                        ))
+                    for idx, dev in candidates:
+                        if _transport_works(idx, "output", None,
+                                            rate=sample_rate, cache=False):
+                            print(f"[Audio] Dispositivo audio selezionato: "
+                                  f"{dev['name']} tramite API {api['name']}")
+                            return idx
+            if requested:
+                print(f"[Audio] Dispositivo '{requested}' non disponibile; "
+                      "provo il dispositivo predefinito.")
+    except (sd.PortAudioError, OSError) as exc:
+        print(f"[Audio] Enumerazione output fallita: {exc}")
+    raise RuntimeError(
+        "Impossibile riprodurre l'audio. Verifica le impostazioni di output di Windows"
+    )
+
+
 def _query() -> dict[str, list[str]]:
     """Return {'input': [names...], 'output': [names...]}. Never raises.
 
@@ -269,8 +390,6 @@ def _query() -> dict[str, list[str]]:
             apis = [a.get("name", "") for a in sd.query_hostapis()]
         except Exception:
             apis = []
-
-        preferred = _PREFERRED_APIS.get(platform.system(), ())
 
         def _collect(api_filter, kind) -> list[tuple[int, str]]:
             """(index, name) for named, non-pseudo devices on one side that can
@@ -293,11 +412,10 @@ def _query() -> dict[str, list[str]]:
                 found.append((idx, name))
             return found
 
-        # Each direction picks its own host API. They are genuinely different
-        # problems — on Windows the microphone works on DirectSound while the
-        # speakers only work on MME — and a single global choice cannot be right
-        # for both.
+        # Input and output have independent preferences and transport probes.
         for kind in ("input", "output"):
+            preferred = (_output_api_preference_order(platform.system())
+                         if kind == "output" else _api_preference_order(platform.system()))
             for api_filter in list(preferred) + [None]:
                 found = _collect(api_filter, kind)
                 if not found:
@@ -390,8 +508,10 @@ def resolve(name: str, kind: str):
         # populates it; calling it here is a no-op once the cache is warm.
         list_devices(kind)
         chosen = _chosen_api.get(kind)
+        preferred = (_output_api_preference_order(platform.system())
+                     if kind == "output" else _api_preference_order(platform.system()))
         orders = ([chosen] if chosen is not None else []) \
-            + [a for a in _PREFERRED_APIS.get(platform.system(), ()) if a != chosen] \
+            + [a for a in preferred if a != chosen] \
             + [None]
 
         # A candidate only counts if it can be opened at the rate this side runs

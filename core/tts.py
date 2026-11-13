@@ -10,12 +10,39 @@ from __future__ import annotations
 import asyncio
 import os
 import queue as _queue
+import re
 import threading
 from typing import Callable, Optional
 
 import numpy as np
 import sounddevice as sd
 
+from core import audio_devices
+from memory.config_manager import get_output_device
+
+
+def normalize_text_for_tts(text: str) -> str:
+    """Make executable names and numeric quantities easier to read in Italian."""
+    from num2words import num2words
+
+    text = re.sub(r"\b(?:vs[ _.-]?code|visual[ _.-]+studio[ _.-]+code)(?:\.exe)?\b",
+                  "visual studio code", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bchrome(?:\.exe)?\b", "cromo", text, flags=re.IGNORECASE)
+    text = re.sub(
+        r"\b([A-Za-z][A-Za-z0-9_+-]*)\.(?:exe|dll|py)\b",
+        lambda match: re.sub(r"[_+-]+", " ", match.group(1)),
+        text, flags=re.IGNORECASE,
+    )
+    text = re.sub(r"\b([A-Za-z][A-Za-z0-9]*(?:[_-][A-Za-z0-9]+)+)\b",
+                  lambda match: re.sub(r"[_-]+", " ", match.group(1)), text)
+
+    def number(match: re.Match) -> str:
+        value = int(match.group(1))
+        if value > 999_999_999:
+            return match.group(0)
+        return num2words(value, lang="it") + (" per cento" if match.group(2) else "")
+
+    return re.sub(r"(?<![\w:/-])(?<!\d[.,])(\d{1,9})(%?)(?!\w|[.,]\d|[/:-]\d)", number, text)
 
 
 # USE_TF=0 stops transformers from importing TensorFlow (saves 4-8 s startup).
@@ -85,7 +112,20 @@ def _play_np(
     """Play float32 mono (or stereo) audio via sounddevice.
     Accepts numpy arrays or PyTorch tensors.
     """
-    sd.play(_to_numpy(samples), sample_rate)
+    try:
+        _play_np_checked(samples, sample_rate, stop_event)
+    except (RuntimeError, sd.PortAudioError) as exc:
+        print("[Audio] Impossibile riprodurre l'audio. Verifica le "
+              f"impostazioni di output di Windows ({exc})")
+        raise
+
+
+def _play_np_checked(samples, sample_rate: int, stop_event: threading.Event | None):
+    device = audio_devices.select_output(
+        get_output_device(), sample_rate=sample_rate
+    )
+    sd.play(_to_numpy(samples), sample_rate, device=device,
+            extra_settings=audio_devices.output_extra_settings(device))
     if stop_event is None:
         sd.wait()
         return
@@ -120,8 +160,7 @@ def _play_audio_bytes(audio_bytes: bytes) -> None:
         nchannels=1,
     )
     samples = np.array(decoded.samples, dtype=np.float32)
-    sd.play(samples, decoded.sample_rate)
-    sd.wait()
+    _play_np(samples, decoded.sample_rate)
 
 
 # ---------------------------------------------------------------------------
@@ -519,7 +558,7 @@ class TTSPlayer:
                 self._playing = True
             if on_start:
                 on_start()
-            self._engine.speak(text)
+            self._engine.speak(normalize_text_for_tts(text))
         except Exception as e:
             print(f"[TTS] Error: {e}")
         finally:

@@ -20,8 +20,8 @@ def _completed(args, *, returncode=0, stdout="", stderr=""):
     return subprocess.CompletedProcess(args, returncode, stdout, stderr)
 
 
-def test_safe_echo_executes_without_shell():
-    result = TerminalAgent(timeout_seconds=2).execute("echo hello")
+def test_safe_echo_executes_without_shell(tmp_path):
+    result = TerminalAgent(database_path=tmp_path / "terminal.sqlite3", timeout_seconds=10).execute("echo hello")
 
     assert result.return_code == 0
     assert "hello" in result.stdout

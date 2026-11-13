@@ -125,3 +125,15 @@ def test_terminal_output_is_truncated_before_it_reaches_chat():
 
     assert result["stdout"] == "x" * MAX_OUTPUT_LENGTH + TRUNCATION_MARKER
     assert result["stderr"] == "y" * MAX_OUTPUT_LENGTH + TRUNCATION_MARKER
+
+
+def test_terminal_output_sink_receives_untruncated_output():
+    stdout = "x" * (MAX_OUTPUT_LENGTH + 100)
+    received = []
+    result = terminal_run(
+        {"command": "echo hello", "confirmed": True},
+        terminal_agent=FakeTerminalAgent(stdout=stdout),
+        terminal_output_sink=lambda out, err: received.append((out, err)),
+    )
+    assert received == [(stdout, "")]
+    assert result["stdout"].endswith(TRUNCATION_MARKER)

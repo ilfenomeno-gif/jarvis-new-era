@@ -60,7 +60,7 @@ from typing import Any, AsyncIterator, Optional, Protocol, Sequence
 # ALREADY EXIST read it and change their behaviour:
 #
 #   * main.py's tool-declaration assembly drops tools the engine cannot serve,
-#     so `screen_process` is never offered to an engine with no eyes.
+#     so camera/perception tools are never offered to an engine with no eyes.
 #   * `_describe_limits()` turns the same facts into the [SELF] block of the
 #     system prompt, so the model KNOWS it cannot see and says so plainly
 #     instead of inventing a description of a screen it never received.
@@ -69,8 +69,8 @@ from typing import Any, AsyncIterator, Optional, Protocol, Sequence
 # self-knowledge was built for exactly this shape of problem; a capability dict
 # is the input it was waiting for.
 DEFAULT_CAPS: dict[str, Any] = {
-    # Can the model be handed an image? Decides whether `screen_process` and the
-    # camera are declared at all.
+    # Can the model be handed an image? Decides whether camera/perception tools
+    # are declared at all. The Gemini-backed screen-analysis action is separate.
     "vision": False,
 
     # Can it call functions? Everything this assistant does that is not talking

@@ -524,6 +524,8 @@ def _start_runtime() -> None:
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     bufsize=1,
                     **creation_options,
                 )
@@ -700,7 +702,12 @@ def _run_open_with_context(parameters: dict, player, log_message) -> str:
 
     structured = result.get("structuredContent")
     data = structured.get("data") if isinstance(structured, dict) else None
-    view = data.get("view") if isinstance(data, dict) else None
+    if isinstance(data, dict):
+        view = data.get("view")
+    elif isinstance(structured, dict):
+        view = structured.get("view")
+    else:
+        view = None
     camera = view.get("camera") if isinstance(view, dict) else None
     if not isinstance(camera, dict):
         return f"Signore, la GEV non ha restituito una vista valida per '{location}'."

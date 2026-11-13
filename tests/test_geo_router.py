@@ -3,6 +3,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from core.geo_router import classify_and_route
@@ -25,6 +27,18 @@ def test_geographic_query_strips_article_and_year_from_place():
     assert decision["epoch"] == "1944"
 
 
+@pytest.mark.parametrize(
+    ("query", "location"),
+    [("Vai a Roma", "Roma"), ("Portami a Parigi", "Parigi")],
+)
+def test_direct_navigation_query_routes_to_place(query, location):
+    decision = classify_and_route(query)
+
+    assert decision["intent"] == "geo"
+    assert decision["location"] == location
+    assert decision["confidence"] >= 0.7
+
+
 def test_historical_query_extracts_event_location():
     decision = classify_and_route("La battaglia di Waterloo")
 
@@ -39,6 +53,13 @@ def test_unrelated_query_does_not_route():
     assert decision["intent"] == "none"
     assert decision["location"] == ""
     assert classify_geo_history_intent("Come stai?") == "none"
+
+
+def test_non_geographic_command_does_not_route():
+    decision = classify_and_route("Apri impostazioni")
+
+    assert decision["intent"] == "none"
+    assert decision["location"] == ""
 
 
 def test_ambiguous_geographic_query_does_not_route():

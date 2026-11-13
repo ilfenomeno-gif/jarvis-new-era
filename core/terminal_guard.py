@@ -139,6 +139,25 @@ class TerminalGuard:
                     argv=argv,
                 )
         executable = Path(argv[0]).name.casefold()
+        if executable == "ipconfig" and (
+            argv[0].casefold() != "ipconfig"
+            or tuple(arg.casefold() for arg in argv[1:]) not in ((), ("/all",))
+        ):
+            return PolicyResult(
+                allowed=False, blocked=True, requires_override=False,
+                reason="Only ipconfig and ipconfig /all are permitted.",
+                command=command, argv=argv,
+            )
+        if executable == "ping" and (
+            argv[0].casefold() != "ping"
+            or len(argv) != 2
+            or not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9.:-]{0,252}", argv[1])
+        ):
+            return PolicyResult(
+                allowed=False, blocked=True, requires_override=False,
+                reason="Only ping followed by a single host is permitted.",
+                command=command, argv=argv,
+            )
         if executable not in self.policy.allowed_executables:
             return PolicyResult(
                 allowed=False,

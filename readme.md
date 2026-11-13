@@ -79,6 +79,136 @@ temporanei e non toccano il layout salvato dell'utente.
 Il livello `DEBUG` non registra payload sensibili; se nei log compaiono
 credenziali, è un bug: apri una issue.
 
+Su Windows l'uscita vocale prova WASAPI, DirectSound e infine MME, privilegiando
+il dispositivo predefinito di Windows o quello scelto nelle impostazioni.
+WASAPI usa la conversione del mixer in modalità condivisa per i sample rate
+non nativi. Ogni dispositivo viene provato con silenzio prima dell'uso:
+un'apertura riuscita non garantisce che l'audio si muova realmente. Se necessario,
+`JARVIS_AUDIO_HOST_API_ORDER=directsound,mme,wasapi` cambia esplicitamente
+l'ordine; l'ingresso mantiene la propria selezione. Se nessun dispositivo passa
+la prova, verifica il dispositivo predefinito e le impostazioni audio di Windows.
+
+### Identità e wake word
+
+L'assistente è Jarvis quando la mappa è attiva. Diventa Iris solo quando
+l'avatar è mostrato, tramite «Iris rivelati» o la funzione HUD `reveal`;
+«Iris nasconditi» e il ritorno alla mappa ripristinano Jarvis. Nome, prompt
+e voce seguono la modalità visualizzata, non la wake word.
+
+Con la wake word abilitata, il modello predefinito `hey_jarvis` apre il
+microfono. Facoltativamente, `JARVIS_IRIS_WAKE_WORD_MODEL` può indicare il
+percorso di un modello openWakeWord ONNX Iris locale: anche questa frase apre
+solo il microfono, senza cambiare modalità. Il modello Iris non è incluso né
+scaricato automaticamente. I modelli devono essere distinti; se quello Iris
+non si carica, Jarvis resta disponibile quando il suo modello funziona.
+
+Un esempio disponibile è il modello
+["Hey Iris"](https://openwakeword.com/library/2502), che richiede accesso al
+sito per il download ed è concesso per uso personale e non commerciale alle
+condizioni indicate dal fornitore. Riconosce la frase «Hey Iris», non è stato
+verificato con «Iris» da solo e non è stato collaudato con questa applicazione.
+
+Il cambio di modalità ricrea la sessione Live senza riprendere la conversazione
+precedente, perché prompt e voce vengono fissati alla connessione; l'audio
+pronunciato durante la riconnessione può andare perso. Le risposte sono generate
+dal modello e l'aderenza all'identità non è deterministica.
+
+### Chat e riepilogo
+
+Le risposte articolate possono usare elenchi e grassetto nelle chat HUD, GEV
+e Gemini. Nella chat Gemini il Markdown viene applicato al termine dello
+streaming. Il testo inviato alla lettura viene ripulito dai simboli Markdown
+e i passaggi tra righe vengono separati con punteggiatura; la voce
+Live è generata direttamente dal modello e segue un'istruzione equivalente.
+Chiedi «organizza la conversazione» o «riassumi cosa abbiamo detto» per
+riassumere gli ultimi 20 messaggi della sessione (fino a 40 su richiesta).
+Il riassunto usa il modello selezionato: con Gemini la cronologia selezionata
+viene inviata al servizio cloud; con il cervello locale viene usato Ollama.
+Non include messaggi delle sessioni precedenti non presenti nella cronologia
+corrente.
+
+### Appunti e note
+
+Chiedi «prendi appunto che devo comprare il latte» o «salva una nota»;
+senza categoria viene usata **Generale**. «Mostrami gli appunti» li elenca
+con categoria, data e ID; è anche possibile cercarli per testo. Per
+«staccare» una singola nota serve il suo ID, oppure si può esportare
+un'intera categoria: viene creato un nuovo file `.txt` sul Desktop senza
+sovrascrivere file esistenti. La cancellazione riguarda un solo ID e richiede
+conferma esplicita.
+
+Le note sono salvate localmente in `config/notes.json`, escluso da Git.
+Il precedente plugin `quick_notes` usa un archivio separato: le sue note non
+sono migrate automaticamente. Il Desktop deve essere disponibile nel percorso
+`~/Desktop`.
+
+### Task programmati e briefing
+
+Chiedi, ad esempio, «tra 10 minuti ricordami di bere», «ogni mattina alle 8
+dimmi il meteo» oppure «prepara il briefing mattutino». I task di tipo
+promemoria, meteo e briefing sono salvati in `config/scheduled_tasks.json`,
+usano l'ora locale e vengono ricaricati all'avvio. Jarvis deve essere in
+esecuzione per consegnarli: quelli scaduti vengono elaborati al successivo
+avvio. Non sono supportati comandi terminale arbitrari programmati.
+
+Il briefing usa la città memorizzata o indicata nella richiesta, la ricerca web
+per meteo e notizie, e i task Jarvis di oggi; il calendario esterno non è
+integrato. Se la voce non è connessa, il risultato programmato appare nella UI.
+Per sicurezza l'apertura app richiede conferma, come il terminale: `ipconfig`
+e `ipconfig /all` sono consentiti dalla policy; opzioni come `/release` e
+`/renew` restano bloccate. È consentito anche `ping` seguito da un solo host,
+senza opzioni. Dopo la conferma il comando viene eseguito in background: la
+coda può proseguire e il risultato completo compare nella UI, mentre la
+lettura vocale usa al massimo tre righe e 300 caratteri. Se la voce non è
+connessa o resta occupata, la mancata lettura viene segnalata nella UI.
+La ricerca delle app include PATH, Program Files e AppData Local; percorsi
+bloccati, nomi ambigui e altre restrizioni di sicurezza restano esclusi.
+Per richiedere esplicitamente l'apertura tramite terminale, dire ad esempio
+«apri notepad tramite terminale»: occorre confermare il comando mostrato.
+Sono consentiti soltanto `start notepad`, `start calc`, `start chrome`,
+`start mspaint` e `start explorer`, senza argomenti o operatori shell.
+L'avvio viene richiesto in background e non verifica che la finestra si apra.
+
+Il comando «cosa vedi» mostra subito l'avvio dell'analisi dello schermo nel
+log della UI. Se l'analisi supera i 20 secondi, compare un avviso: l'operazione
+continua e la risposta viene mostrata quando è pronta.
+Vision richiede fino a 2000 token e usa il livello di ragionamento `low` per
+Gemini 3.8; Gemma non riceve impostazioni di thinking. Se non c'è testo finale,
+l'ultimo `thought` non vuoto viene mostrato e letto come ripiego: può essere
+incompleto o inesatto e non equivale a una risposta finale verificata. I
+`thought` non vengono stampati nel terminale; la risposta finale può comunque
+contenere informazioni private dello schermo.
+In caso di errore 503, Vision riprova il modello principale tre volte con
+attese di 1 e 2 secondi, quindi dopo 4 secondi prova `gemma-4-26b-a4b-it`.
+In caso di errore 429 prova immediatamente lo stesso fallback, con immagine e
+richiesta identiche. Lo screenshot inviato è largo al massimo 1024 pixel;
+il timeout HTTP è di 20 secondi per il modello principale e di 45 secondi per
+il fallback. La riduzione può compromettere la leggibilità dei testi piccoli.
+Tra analisi consecutive è previsto un intervallo di 10 secondi dalla fine
+dell'ultima richiesta; anche una richiesta già in corso blocca ulteriori
+analisi. Dopo due risposte consecutive con errore interno 500, le richieste
+successive usano al massimo 800 pixel di larghezza, fino al primo risultato
+diverso da 500, quando torna il limite di 1024 pixel. Le impostazioni valgono
+per la sessione corrente e si azzerano al riavvio.
+La disponibilità del modello e i limiti di quota dipendono dal progetto e
+dal servizio API: non è garantita una quota gratuita separata o più alta.
+Per limitare l'analisi alla finestra in primo piano, richiedi esplicitamente
+«analizza la finestra attiva»: la modalità `active_window` cattura la sua area
+visibile sul desktop, anche se parzialmente fuori schermo. Altre finestre che
+la coprono possono comparire nella cattura; se non è disponibile una finestra
+valida, viene segnalato un errore invece di inviare l'intero schermo.
+Se anche il fallback esaurisce la quota (429), Jarvis lo comunica senza mostrare
+l'errore tecnico e libera la coda; anche 503 e timeout producono un messaggio
+comprensibile quando i tentativi disponibili non vanno a buon fine.
+Un watchdog indipendente libera la FIFO dopo 60 secondi per gli altri comandi;
+per l'analisi Vision concede 150 secondi dall'inizio dell'esecuzione e registra
+gli stack dei thread coinvolti. Questo include tutti i tentativi e la cattura:
+ritardi aggiuntivi possono comunque consumare il tempo disponibile per Gemma.
+Anche il timeout ordinario e il timeout del processo Vision sono di 150 secondi.
+La visione gira in un processo separato che viene terminato se l'operazione
+scade o viene annullata. Per sbloccare manualmente, scrivi oppure pronuncia
+«Jarvis, sblocca la coda». I risultati tardivi vengono ignorati.
+
 La suite automatica non-live imposta Qt offscreen tramite `tests/conftest.py`;
 i test che creano finestre QtWebEngine reali vengono saltati in questa modalita
 per evitare crash nativi. Non serve impostare `CI=true`:
@@ -410,6 +540,7 @@ python -m pytest -q tests\test_task_manager.py tests\test_worker_llm.py tests\te
 ## Documenti
 
 - `docs/n8n/README.md` — configurazione del bridge n8n e workflow "echo" di prova.
+- `docs/CONNETTORI.md` — prerequisiti OAuth e stato dei connettori disponibili.
 - `NOTICE` — attribuzioni e licenze.
 - `INSTALL_WINDOWS.md` — guida di installazione.
 - `SECURITY.md` — checklist di sicurezza.

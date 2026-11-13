@@ -1,5 +1,5 @@
 """
-Local wake-word detection for JARVIS ("Hey Jarvis").
+Local wake-word detection using a configured openWakeWord model.
 
 Design goals:
   • ZERO cost when the feature is off — openwakeword is imported ONLY inside
@@ -13,20 +13,27 @@ Design goals:
     network call except the one-time model download the user triggers from the UI.
 
 openwakeword ships small ONNX models (a few MB each) and runs comfortably on a
-CPU. The pretrained wake phrase used here is "Hey Jarvis".
+CPU. The default model is "hey_jarvis"; a locally installed model can be
+selected with JARVIS_WAKE_WORD_MODEL and labeled with JARVIS_WAKE_WORD_PHRASE.
 """
 from __future__ import annotations
 
+import os
 import queue
 import subprocess
 import sys
 import threading
 from collections import deque
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
-# Pretrained openwakeword model that listens for "Hey Jarvis".
-WAKE_MODEL = "hey_jarvis"
+# Override with a locally installed openWakeWord model for the chosen wake phrase.
+WAKE_MODEL = os.environ.get("JARVIS_WAKE_WORD_MODEL", "hey_jarvis").strip() or "hey_jarvis"
+IRIS_WAKE_MODEL = os.environ.get("JARVIS_IRIS_WAKE_WORD_MODEL", "").strip()
+WAKE_PHRASE = os.environ.get(
+    "JARVIS_WAKE_WORD_PHRASE",
+    " ".join(part.capitalize() for part in WAKE_MODEL.split("_")),
+).strip()
 # Score in [0,1]; above this counts as a detection. Tunable per environment.
 DEFAULT_THRESHOLD = 0.5
 # Mic frames arrive at 16 kHz int16; this is just the detector's input rate.
@@ -112,8 +119,10 @@ def is_ready() -> bool:
         models_dir = Path(openwakeword.__file__).resolve().parent / "resources" / "models"
         if not models_dir.is_dir():
             return False
-        has_wake = (any(models_dir.glob(f"{WAKE_MODEL}*.onnx"))
-                    or any(models_dir.glob(f"{WAKE_MODEL}*.tflite")))
+        model_path = Path(WAKE_MODEL)
+        has_wake = (model_path.is_file()
+                    or any(models_dir.glob(f"{model_path.stem}*.onnx"))
+                    or any(models_dir.glob(f"{model_path.stem}*.tflite")))
         has_mel = (any(models_dir.glob("melspectrogram*.onnx"))
                    or any(models_dir.glob("melspectrogram*.tflite")))
         has_emb = (any(models_dir.glob("embedding_model*.onnx"))
@@ -169,7 +178,7 @@ class WakeWordDetector:
     the callback must marshal to whatever loop/UI it needs).
     """
 
-    def __init__(self, on_detect: Callable[[], None],
+    def __init__(self, on_detect: Callable[[str], None],
                  threshold: float = DEFAULT_THRESHOLD,
                  logger: Callable[[str], None] = print,
                  notify: Callable[[str], None] | None = None):
@@ -184,6 +193,12 @@ class WakeWordDetector:
         self._running = False
         self._model = None
         self._ready = False
+        self._models = {WAKE_MODEL: "jarvis"}
+        if IRIS_WAKE_MODEL:
+            if Path(IRIS_WAKE_MODEL).stem.casefold() == Path(WAKE_MODEL).stem.casefold():
+                self._notify("Wake word Iris non disponibile: i modelli Jarvis e Iris devono essere distinti.")
+            else:
+                self._models[IRIS_WAKE_MODEL] = "iris"
 
     def start(self) -> bool:
         """Load the model and spawn the inference thread. Returns True on success.
@@ -192,17 +207,28 @@ class WakeWordDetector:
             return True
         try:
             from openwakeword.model import Model
-            self._model = Model(wakeword_models=[WAKE_MODEL], inference_framework="onnx")
+            self._model = Model(wakeword_models=list(self._models), inference_framework="onnx")
         except Exception as e:
             self._logger(f"Wake word: could not load model — {e}")
-            self._notify("Wake word unavailable — use the WAKE NOW button.")
-            self._model = None
-            return False
+            if len(self._models) > 1:
+                self._notify(f"Wake word Iris non disponibile: impossibile caricare il modello ({e}).")
+                self._models = {WAKE_MODEL: "jarvis"}
+                try:
+                    self._model = Model(wakeword_models=[WAKE_MODEL], inference_framework="onnx")
+                except Exception as primary_error:
+                    self._logger(f"Wake word: could not load Jarvis model — {primary_error}")
+                    self._notify("Wake word unavailable — use the WAKE NOW button.")
+                    self._model = None
+                    return False
+            else:
+                self._notify("Wake word unavailable — use the WAKE NOW button.")
+                self._model = None
+                return False
         self._running = True
         self._ready = True
         self._thread = threading.Thread(target=self._loop, daemon=True, name="WakeWordThread")
         self._thread.start()
-        self._logger("Wake word: listening for 'Hey Jarvis'.")
+        self._logger(f"Wake word: listening for '{WAKE_PHRASE}'.")
         return True
 
     def stop(self) -> None:
@@ -241,19 +267,19 @@ class WakeWordDetector:
                 if frame is None or not self._running:
                     break
                 scores = self._model.predict(np.asarray(frame, dtype=np.int16))
-                score = 0.0
+                detected = None
+                score = self._threshold
                 if isinstance(scores, dict):
-                    # match the jarvis model regardless of exact key suffix
                     for k, v in scores.items():
-                        if "jarvis" in k.lower():
-                            score = max(score, float(v))
-                    if score == 0.0 and scores:
-                        score = max(float(v) for v in scores.values())
-                if score >= self._threshold:
+                        for model, identity in self._models.items():
+                            if Path(model).stem.casefold() in k.casefold() and float(v) >= score:
+                                score = float(v)
+                                detected = identity
+                if detected:
                     # drain any backlog so we don't double-fire on the same utterance
                     self._drain()
                     try:
-                        self._on_detect()
+                        self._on_detect(detected)
                     except Exception as e:
                         self._logger(f"Wake word: on_detect error — {e}")
             except Exception as e:

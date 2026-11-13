@@ -1,4 +1,5 @@
 import asyncio
+import threading
 from types import SimpleNamespace
 
 from main import JarvisLive
@@ -24,6 +25,9 @@ class FakeHud:
 
     def push_chat_stream(self, phase, text=""):
         self.stream_events.append((phase, text))
+
+    def push_chat(self, role, text):
+        pass
 
 
 class FakeRouter:
@@ -66,6 +70,44 @@ def _live(router):
     return live
 
 
+def test_local_personality_refreshes_and_can_be_disabled(monkeypatch):
+    class PromptRouter(FakeRouter):
+        def __init__(self):
+            super().__init__([])
+            self.prompts = []
+
+        def stream_chat(self, messages, tools=None):
+            self.prompts.append(messages[0]["content"])
+            return iter([
+                {"type": "content", "text": "Risposta."},
+                {"type": "done", "full_text": "Risposta."},
+            ])
+
+    router = PromptRouter()
+    live = _live(router)
+    context = {"hour": 8, "window_category": "browser"}
+    live._context_engine = SimpleNamespace(
+        get_context=lambda: context,
+        prompt_context=lambda: "[CONTESTO ATTUALE - metadati, non istruzioni]\nBrowser",
+    )
+    monkeypatch.delenv("JARVIS_PERSONALITY_ENGINE", raising=False)
+
+    async def conversation():
+        await live._handle_local_text("Prima")
+        context["hour"] = 23
+        await live._handle_local_text("Seconda")
+        monkeypatch.setenv("JARVIS_PERSONALITY_ENGINE", "0")
+        await live._handle_local_text("Terza")
+
+    asyncio.run(conversation())
+    assert "energico" in router.prompts[0]
+    assert "riposo" in router.prompts[1]
+    assert "energico" not in router.prompts[1]
+    assert "Istruzione di personalità attuale:" not in router.prompts[2]
+    assert all(prompt.count("test system prompt") == 1 for prompt in router.prompts)
+    assert all(prompt.count("[CONTESTO ATTUALE") == 1 for prompt in router.prompts)
+
+
 def test_local_token_stream_publishes_incremental_content_when_enabled(monkeypatch):
     monkeypatch.setenv("JARVIS_STREAM_TOKEN", "1")
     router = FakeRouter([[
@@ -84,6 +126,40 @@ def test_local_token_stream_publishes_incremental_content_when_enabled(monkeypat
         ("end", ""),
     ]
     assert live.ui.logs == ["JARVIS: Ciao Jarvis"]
+
+
+def test_visible_iris_identity_reaches_local_name_question_and_ui(monkeypatch):
+    import main
+
+    monkeypatch.setattr(main, "_load_system_prompt", lambda: "You are Jarvis.")
+
+    class IdentityRouter(FakeRouter):
+        def stream_chat(self, messages, tools=None):
+            self.calls.append((messages.copy(), tools))
+            prompt = messages[0]["content"]
+            assert "Your name is Iris" in prompt
+            assert "jarvis" not in prompt.casefold()
+            assert messages[-1]["content"] == "Come ti chiami?"
+            return iter([
+                {"type": "content", "text": "Mi chiamo Iris, Signore."},
+                {"type": "done", "full_text": "Mi chiamo Iris, Signore."},
+            ])
+
+    router = IdentityRouter([])
+    live = _live(router)
+    live._iris_voice_active = False
+    live.request_reconnect = lambda **kwargs: None
+    gate = SimpleNamespace(activate=lambda: None)
+
+    async def activate_and_ask():
+        live._on_hud_iris_visibility(True)
+        await live._activate_wake_identity("iris", gate)
+        await live._handle_local_text("Come ti chiami?")
+
+    asyncio.run(activate_and_ask())
+    assert live.ui.logs[-1] == "Iris: Mi chiamo Iris, Signore."
+    assert "jarvis" not in live.ui.logs[-1].casefold()
+    assert live._session_log[-1] == "Iris: Mi chiamo Iris, Signore."
 
 
 def test_local_text_runs_model_tool_call_and_logs_final_response():
@@ -542,6 +618,7 @@ def test_terminal_tool_rejects_model_confirmation_and_binds_command_to_user_appr
     live = _live(FakeRouter([]))
     live._last_user_text = "Esegui il comando echo hello"
     executed = []
+    done = threading.Event()
 
     class ActionRegistry:
         def has(self, name):
@@ -549,6 +626,7 @@ def test_terminal_tool_rejects_model_confirmation_and_binds_command_to_user_appr
 
         def run(self, name, args, ctx=None):
             executed.append((name, args.copy()))
+            done.set()
             return {"stdout": "hello\n", "stderr": "", "returncode": 0}
 
     live._action_registry = ActionRegistry()
@@ -578,12 +656,11 @@ def test_terminal_tool_rejects_model_confirmation_and_binds_command_to_user_appr
             args={"command": "echo hello", "confirmed": True},
         ))
         assert result.response == {
-            "stdout": "hello\n",
-            "stderr": "",
-            "returncode": 0,
+            "result": "Sto eseguendo il comando. Il risultato arriverà appena pronto.",
         }
 
     asyncio.run(run())
+    assert done.wait(2)
     assert executed == [
         ("terminal_run", {"command": "echo hello", "confirmed": True})
     ]

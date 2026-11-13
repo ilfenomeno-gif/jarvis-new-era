@@ -1,7 +1,7 @@
 """Execute a user-confirmed command through the guarded Terminal Agent."""
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
 
 from core.terminal_agent import (
     CommandBlocked,
@@ -25,6 +25,7 @@ def terminal_run(
     parameters: dict | None = None,
     *,
     terminal_agent: TerminalAgent | None = None,
+    terminal_output_sink: Callable[[str, str], None] | None = None,
     **_context: Any,
 ) -> dict[str, Any]:
     values = parameters or {}
@@ -68,6 +69,8 @@ def terminal_run(
     except (CommandBlocked, TerminalExecutionError, TypeError, ValueError) as exc:
         return {"stdout": "", "stderr": str(exc), "returncode": 126}
 
+    if terminal_output_sink is not None:
+        terminal_output_sink(result.stdout, result.stderr)
     return {
         "stdout": _truncate(result.stdout),
         "stderr": _truncate(result.stderr),

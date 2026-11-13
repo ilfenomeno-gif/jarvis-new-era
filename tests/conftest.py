@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -8,6 +9,19 @@ import pytest
 
 # Select Qt's headless backend before test modules import any Qt bindings.
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ.setdefault("QTWEBENGINE_CHROMIUM_FLAGS", "--disable-gpu --log-level=3")
+
+
+@pytest.fixture(autouse=True)
+def reset_sounddevice_defaults():
+    def reset():
+        sounddevice = sys.modules.get("sounddevice")
+        if sounddevice is not None:
+            sounddevice.default.reset()
+
+    reset()
+    yield
+    reset()
 
 
 @dataclass

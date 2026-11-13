@@ -29,6 +29,38 @@ def test_mock_browser_navigates_and_interacts_without_launching_real_browser():
     assert mock.closed
 
 
+def test_mock_browser_supports_page_zoom_commands():
+    mock = MockBrowser()
+    browser = BrowserAutomation(mock)
+
+    assert browser.set_zoom("in") == "in"
+    assert browser.set_zoom("out") == "out"
+    assert browser.set_zoom("reset") == "reset"
+    assert mock.actions == [
+        ("set_zoom", "in"),
+        ("set_zoom", "out"),
+        ("set_zoom", "reset"),
+    ]
+
+
+def test_playwright_browser_zoom_changes_document_scale_and_resets():
+    class _Page:
+        def __init__(self):
+            self.zoom_values = []
+
+        def evaluate(self, _script, percent):
+            self.zoom_values.append(percent)
+
+    browser = PlaywrightBrowser()
+    browser._page = _Page()
+
+    assert browser.set_zoom("in") == "in"
+    assert browser.set_zoom("in") == "in"
+    assert browser.set_zoom("out") == "out"
+    assert browser.set_zoom("reset") == "reset"
+    assert browser._page.zoom_values == [110, 120, 110, 100]
+
+
 def test_mock_browser_accessible_role_and_label_actions():
     mock = MockBrowser(elements={"button:Continue", "label:Name"})
     browser = BrowserAutomation(mock)
@@ -75,6 +107,18 @@ def test_mock_web_search_stops_for_explicit_google_consent():
 
     with pytest.raises(PermissionError, match="explicit choice"):
         browser.search_web("Jarvis")
+
+
+def test_mock_browser_youtube_playback_is_visible_and_command_scoped():
+    mock = MockBrowser()
+    browser = BrowserAutomation(mock)
+
+    browser.start()
+    result = browser.play_youtube_video("Daft Punk")
+
+    assert result.startswith("https://www.youtube.com/results?")
+    assert mock.actions == [("play_youtube_video", "Daft Punk")]
+    browser.close()
 
 
 def test_mock_web_search_does_not_bypass_google_human_verification():

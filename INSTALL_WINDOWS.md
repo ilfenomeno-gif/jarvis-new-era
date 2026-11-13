@@ -13,9 +13,8 @@
 git clone <questo-repo> jarvis-vii-app
 cd jarvis-vii-app
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-python -m playwright install
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m playwright install
 ```
 
 ## Configurazione della chiave Gemini (DPAPI, mai in chiaro)
@@ -30,8 +29,47 @@ python -c "from core.api_keys import migrate; print(migrate(remove_plain=True))"
 ## Avvio
 
 ```powershell
-python main.py
+.\.venv\Scripts\python.exe main.py
 ```
+
+`main.py` rileva anche un avvio accidentale con Python globale e rilancia Jarvis
+con `.venv\Scripts\python.exe`. Puoi verificare interprete e dipendenze senza
+avviare l'interfaccia:
+
+```powershell
+python main.py --check-startup
+```
+
+Se manca una dipendenza richiesta, Jarvis si ferma prima di caricare l'interfaccia
+e indica di eseguire `pip install -r requirements.txt` nell'ambiente virtuale.
+
+### Avvio automatico (facoltativo)
+
+Per avviare Jarvis all'accesso dell'utente Windows, esegui:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\setup_autostart.ps1
+```
+
+Lo script crea una scorciatoia nella cartella Startup dell'utente corrente,
+usando `pythonw.exe` della `.venv` e avviando la finestra minimizzata. Non
+termina né modifica altri processi. Per rimuoverla:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\setup_autostart.ps1 -Uninstall
+```
+
+### Dipendenze mancanti durante un'azione
+
+Se un'azione segnala un modulo Python mancante, Jarvis propone l'installazione.
+Solo dopo la conferma installa il pacchetto se è già dichiarato in
+`requirements.txt`, usando `python -m pip` dell'ambiente virtuale, quindi riprova
+l'azione una sola volta. Se il modulo non corrisponde a una dipendenza del
+progetto, l'installazione viene rifiutata e l'errore viene mostrato.
+
+Il watchdog controlla solamente i processi MCP avviati e posseduti da Jarvis;
+se il server Public APIs si interrompe, ne avvia una nuova istanza. Non termina
+processi esterni né altre istanze dell'applicazione.
 
 ## 4. Motore locale (opzionale, privacy)
 

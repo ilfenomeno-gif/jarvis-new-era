@@ -1,6 +1,8 @@
-"""Drives the 3D globe in the central display. UI only: no data is read or written."""
-from core.viewer3d import build_call, fetch_flights
+"""Drives the 3D model viewer in the central display."""
+
 import json
+
+from core.viewer3d import fetch_flights
 
 _MODES = (
     "show", "hide", "fly_to", "add_marker", "clear_markers", "spin",
@@ -93,7 +95,8 @@ def viewer_3d(parameters: dict, player=None, **_ignored) -> str:
             return f"Model {name} loaded in the hologram."
         if mode == "clear_model":
             player.viewer3d_call("clearModel", [])
-            return "Model removed, globe restored."
+            player.viewer3d_show(False)
+            return "Model removed; the 3D viewer was closed."
         if mode == "load_live_flights":
             region = str(params.get("region") or "europe").strip().lower()
             # Tool threads may block; the UI thread is only reached via the signal.
@@ -104,6 +107,12 @@ def viewer_3d(parameters: dict, player=None, **_ignored) -> str:
             player.viewer3d_call("clearFlights", [])
             return "Flights cleared."
         if mode in ("show", "hide"):
+            if (
+                mode == "show"
+                and hasattr(player, "viewer3d_info")
+                and not player.viewer3d_info().get("active")
+            ):
+                return "No 3D model is loaded; the empty viewer stays closed."
             player.viewer3d_show(mode == "show")
             return "3D viewer shown." if mode == "show" else "3D viewer hidden."
         if mode == "fly_to":
@@ -128,15 +137,16 @@ def viewer_3d(parameters: dict, player=None, **_ignored) -> str:
 TOOL = {
     "name": "viewer_3d",
     "description": (
-        "Controls the holographic 3D globe in the central display. mode=show or "
-        "hide switches to or from it; fly_to turns the globe to lat/lon; "
+        "Controls the 3D model viewer in the central display; it has no default "
+        "globe or placeholder scene. mode=show only opens a loaded model and hide "
+        "returns to the HUD; fly_to turns the model to lat/lon; "
         "add_marker puts a labelled marker at lat/lon; clear_markers removes "
-        "them; spin starts or stops the rotation; load_live_flights fetches real-time "
-        "flights (OpenSky) and plots them on the globe, region=europe, usa or world "
-        "(default europe), and shows the globe; clear_flights removes them. Use "
+        "them; spin starts or stops rotation; load_live_flights fetches real-time "
+        "flights (OpenSky) and plots them in the viewer, region=europe, usa or world "
+        "(default europe); clear_flights removes them. Use "
         "load_live_flights for requests like 'show live flights' or 'track flights "
         "on the hologram'. load_model shows a .glb/.gltf already saved in the models "
-        "folder (model=file name) in place of the globe; clear_model restores the globe. "
+        "folder (model=file name); clear_model removes it and closes the viewer. "
         "explode_model (on=true/false) spreads the loaded model's parts apart and "
         "back; highlight_part makes the named part glow (empty part clears it); "
         "set_hologram (on=true/false) toggles the projection look (on by default). "

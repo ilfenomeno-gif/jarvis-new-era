@@ -27,6 +27,8 @@ from __future__ import annotations
 
 import importlib.util
 import inspect
+import logging
+import os
 import re
 import sys
 import traceback
@@ -44,6 +46,9 @@ _CTX_KEYS = (
     "response",
     "session_memory",
     "terminal_agent",
+    "terminal_output_sink",
+    "conversation_history",
+    "conversation_summarizer",
     "browser_automation_client",
     "computer_agent",
     "computer_loop",
@@ -194,6 +199,12 @@ class ActionRegistry:
                     f"confirmation, then call it again with {CONFIRM_PARAM}=true.")
         try:
             return _call_handler(rec.handler, parameters, ctx or {}) or "Done."
+        except ModuleNotFoundError:
+            self._logger(
+                f"Action '{name}' requires a missing Python module; "
+                "dependency installation may be offered."
+            )
+            raise
         except Exception as e:
             self._logger(f"Action '{name}' crashed during run(): {e}")
             traceback.print_exc()
@@ -276,8 +287,12 @@ def _validate(module, filename: str) -> ActionRecord:
                         scheduling=_opt_upper(tool.get("scheduling"), _SCHEDULING))
 
 
-def discover_actions(actions_dir: Path, reserved_names: set[str] | None = None,
-                     logger: Callable[[str], None] = print) -> ActionRegistry:
+def discover_actions(
+    actions_dir: Path,
+    reserved_names: set[str] | None = None,
+    logger: Callable[[str], None] = print,
+    recover_missing_dependency: Callable[[ModuleNotFoundError], bool] | None = None,
+) -> ActionRegistry:
     """
     Scans actions_dir for *.py files (skips files starting with '_'). A file is
     only treated as an action if it exposes a module-level TOOL dict; files
@@ -300,16 +315,28 @@ def discover_actions(actions_dir: Path, reserved_names: set[str] | None = None,
             # same objects the rest of the app holds.
             module = sys.modules.get(module_name)
             if module is None:
-                spec = importlib.util.spec_from_file_location(module_name, path)
-                if spec is None or spec.loader is None:
-                    raise ImportError("could not build import spec")
-                module = importlib.util.module_from_spec(spec)
-                sys.modules[module_name] = module
+                def import_action_module(
+                    module_name: str = module_name,
+                    path: Path = path,
+                ):
+                    spec = importlib.util.spec_from_file_location(module_name, path)
+                    if spec is None or spec.loader is None:
+                        raise ImportError("could not build import spec")
+                    loaded_module = importlib.util.module_from_spec(spec)
+                    sys.modules[module_name] = loaded_module
+                    try:
+                        spec.loader.exec_module(loaded_module)
+                    except Exception:
+                        sys.modules.pop(module_name, None)
+                        raise
+                    return loaded_module
+
                 try:
-                    spec.loader.exec_module(module)
-                except Exception:
-                    sys.modules.pop(module_name, None)
-                    raise
+                    module = import_action_module()
+                except ModuleNotFoundError as exc:
+                    if recover_missing_dependency is None or not recover_missing_dependency(exc):
+                        raise
+                    module = import_action_module()
 
             if getattr(module, "TOOL", None) is None:
                 continue   # not an action file — a helper/capture-only module
@@ -340,4 +367,7 @@ def discover_actions(actions_dir: Path, reserved_names: set[str] | None = None,
     registry = ActionRegistry(valid, logger)
     registry._all_records = all_records
     logger(f"Action discovery complete: {len(valid)} active.")
+    if os.environ.get("JARVIS_LOG_LEGACY") != "1" and os.environ.get("JARVIS_LOG_DIAGNOSTIC", "1") == "1":
+        logging.getLogger(__name__).info("Caricate %d azioni", len(valid),
+                                         extra={"component": "core.actions"})
     return registry

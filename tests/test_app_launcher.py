@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import struct
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -32,7 +34,7 @@ def _configure_paths(tmp_path, monkeypatch):
     monkeypatch.setattr(app_launcher, "_BLOCKED_PARTS", frozenset({"downloads"}))
     monkeypatch.setenv("TEMP", str(tmp_path.parent / "other-temp"))
     monkeypatch.setenv("TMP", str(tmp_path.parent / "other-temp"))
-    monkeypatch.setattr(computer_use, "wait_for_foreground", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(app_launcher, "_wait_for_launched_app", lambda *_args: None)
 
 
 def test_find_executable_uses_path_and_remembers_result(tmp_path, monkeypatch):
@@ -99,7 +101,7 @@ def test_launch_localized_notepad_alias_uses_canonical_audit_name(tmp_path, monk
     assert entry["app"] == "notepad"
 
 
-def test_app_launcher_waits_for_launched_process_to_become_foreground(tmp_path, monkeypatch):
+def test_app_launcher_reports_focus_warning_without_claiming_launch_failure(tmp_path, monkeypatch):
     _configure_paths(tmp_path, monkeypatch)
     executable = tmp_path / "Program Files" / "Notepad.exe"
     executable.parent.mkdir(parents=True)
@@ -107,21 +109,104 @@ def test_app_launcher_waits_for_launched_process_to_become_foreground(tmp_path, 
     monkeypatch.setattr(app_launcher, "find_executable", lambda _name: executable)
     monkeypatch.setattr(app_launcher, "_is_whitelisted", lambda _path: True)
     monkeypatch.setattr(app_launcher.os, "startfile", lambda _path: None, raising=False)
-    waits = []
-
-    def wait(process_name, timeout):
-        waits.append((process_name, timeout))
-        return False
-
-    monkeypatch.setattr(computer_use, "wait_for_foreground", wait)
+    monkeypatch.setattr(
+        app_launcher, "_wait_for_launched_app",
+        lambda *_args: "Ho aperto Notepad, ma non sono riuscito a portarlo in primo piano. "
+        "Controlla la barra delle applicazioni.",
+    )
 
     result = app_launcher.launch_app("notepad", confirmed=True)
 
-    assert waits == [("Notepad.exe", 3)]
-    assert "did not become foreground" in result
+    assert result == (
+        "Ho aperto Notepad, ma non sono riuscito a portarlo in primo piano. "
+        "Controlla la barra delle applicazioni."
+    )
     assert json.loads(app_launcher.LOG_PATH.read_text(encoding="utf-8").splitlines()[-1])[
         "event"
-    ] == "launch_failed"
+    ] == "launch_started"
+
+
+def _focus_environment(monkeypatch, *, appear_after=0, fallback=False, target="Notepad.exe"):
+    class WinError(Exception):
+        pass
+
+    class ProcessError(Exception):
+        pass
+
+    clock = [0.0]
+    state = {"calls": 0, "foreground": 0, "activate": 0, "fallback": 0}
+
+    class Window:
+        _hWnd = 42
+        isMinimized = False
+
+        def activate(self):
+            state["activate"] += 1
+            if not fallback:
+                state["foreground"] = self._hWnd
+
+    window = Window()
+
+    def windows(_title):
+        state["calls"] += 1
+        return [window] if clock[0] >= appear_after else []
+
+    def set_foreground(hwnd):
+        state["fallback"] += 1
+        state["foreground"] = hwnd
+
+    monkeypatch.setitem(sys.modules, "pygetwindow", SimpleNamespace(
+        getWindowsWithTitle=windows, PyGetWindowException=WinError,
+    ))
+    monkeypatch.setitem(sys.modules, "pywintypes", SimpleNamespace(error=WinError))
+    monkeypatch.setitem(sys.modules, "win32gui", SimpleNamespace(
+        IsWindowVisible=lambda _hwnd: True,
+        GetForegroundWindow=lambda: state["foreground"],
+        SetForegroundWindow=set_foreground,
+    ))
+    monkeypatch.setitem(sys.modules, "win32process", SimpleNamespace(
+        GetWindowThreadProcessId=lambda _hwnd: (1, 123),
+    ))
+    monkeypatch.setitem(sys.modules, "psutil", SimpleNamespace(
+        Error=ProcessError, NoSuchProcess=ProcessError, AccessDenied=ProcessError,
+        Process=lambda _pid: SimpleNamespace(name=lambda: target),
+    ))
+    monkeypatch.setattr(app_launcher.time, "monotonic", lambda: clock[0])
+    monkeypatch.setattr(app_launcher.time, "sleep", lambda delay: clock.__setitem__(0, clock[0] + delay))
+    return state, clock
+
+
+def test_focus_retries_until_matching_window_appears(tmp_path, monkeypatch):
+    state, clock = _focus_environment(monkeypatch, appear_after=0.9)
+    path = tmp_path / "Notepad.exe"
+    assert app_launcher._wait_for_launched_app("notepad", path, path) is None
+    assert clock[0] >= 0.9
+    assert state["calls"] >= 4
+    assert state["activate"] == 1
+
+
+def test_focus_uses_win32_fallback_if_activation_does_not_focus(tmp_path, monkeypatch):
+    state, _ = _focus_environment(monkeypatch, fallback=True)
+    path = tmp_path / "Notepad.exe"
+    assert app_launcher._wait_for_launched_app("notepad", path, path) is None
+    assert state["activate"] == 1
+    assert state["fallback"] == 1
+
+
+def test_focus_timeout_is_graceful_and_never_activates_other_process(tmp_path, monkeypatch):
+    state, clock = _focus_environment(monkeypatch, target="other.exe")
+    monkeypatch.setattr(app_launcher, "LOG_PATH", tmp_path / "launcher.log")
+    path = tmp_path / "Notepad.exe"
+    result = app_launcher._wait_for_launched_app("notepad", path, path)
+    assert clock[0] == pytest.approx(5.0)
+    assert state["activate"] == 0
+    assert result == (
+        "Ho aperto Notepad, ma non sono riuscito a portarlo in primo piano. "
+        "Controlla la barra delle applicazioni."
+    )
+    assert json.loads(app_launcher.LOG_PATH.read_text(encoding="utf-8"))["event"] == (
+        "launch_focus_unavailable"
+    )
 
 
 def test_find_executable_returns_none_for_unknown_app(tmp_path, monkeypatch):

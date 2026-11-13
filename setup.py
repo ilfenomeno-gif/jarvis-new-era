@@ -1,7 +1,36 @@
+import os
+import platform
 import subprocess
 import sys
-import platform
 from pathlib import Path
+
+PROJECT_DIR = Path(__file__).resolve().parent
+VENV_DIR = PROJECT_DIR / ".venv"
+VENV_PYTHON = VENV_DIR / (
+    "Scripts/python.exe" if platform.system() == "Windows" else "bin/python"
+)
+
+if not VENV_PYTHON.is_file():
+    subprocess.run(
+        [sys.executable, "-m", "venv", str(VENV_DIR)],
+        cwd=PROJECT_DIR,
+        check=True,
+    )
+
+try:
+    using_venv = os.path.samefile(sys.executable, VENV_PYTHON)
+except OSError:
+    using_venv = str(Path(sys.executable).resolve()).casefold() == str(
+        VENV_PYTHON.resolve()
+    ).casefold()
+
+if not using_venv:
+    os.execv(
+        str(VENV_PYTHON),
+        [str(VENV_PYTHON), str(Path(__file__).resolve()), *sys.argv[1:]],
+    )
+
+os.chdir(PROJECT_DIR)
 
 print("Installing requirements...")
 subprocess.run([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"], check=True)
@@ -22,5 +51,4 @@ if platform.system() == "Windows":
             f'    "{sys.executable}" "{postinstall}" -install\n'
         )
 
-print("\n✅ Setup complete! Run 'python main.py' to start MARK LII.")
-
+print(f"\n✅ Setup complete! Run '{VENV_PYTHON} main.py' to start MARK LII.")

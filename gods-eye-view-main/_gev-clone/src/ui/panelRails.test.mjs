@@ -60,6 +60,15 @@ test('Cyber restored accordion prefers keyboard focus when no explicit owner exi
   assert.equal(f.second.classList.contains('collapsed'), false);
 });
 
+test('left rail excludes panels hidden through the visibility dock', () => {
+  const f = fixture('left');
+  f.expand(f.first, 900);
+  f.first.classList.add('panel-dot-hidden');
+  f.run();
+  assert.equal(f.first.classList.contains('layout-auto-collapsed'), false);
+  assert.equal(f.collapsed.includes('first'), false);
+});
+
 function element(
   id,
   { height = 42, top = 234, left = 20, width = 272, collapsed = false } = {},
@@ -292,6 +301,15 @@ for (const collapsed of [true, false]) {
     assert.equal(f.stack.classList.contains('layout-focus'), false);
   });
 }
+
+test('right rail excludes panels hidden through the visibility dock', () => {
+  const f = fixture('right');
+  f.expand(f.second, 900);
+  f.second.classList.add('panel-dot-hidden');
+  f.run();
+  assert.equal(f.second.classList.contains('layout-auto-collapsed'), false);
+  assert.equal(f.collapsed.includes('second'), false);
+});
 
 test('right layout retains Display allocation during measurement and caps restored scroll', () => {
   const f = fixture('right');

@@ -1,0 +1,17 @@
+{
+  "id": "public-apis",
+  "name": "Public APIs",
+  "type": "local-mcp",
+  "transport": "stdio",
+  "auth": "none",
+  "scopes": ["catalog.read"],
+  "tool_refs": {
+    "public_apis.search_public_apis": "catalog.read",
+    "public_apis.get_public_api_details": "catalog.read",
+    "public_apis.filter_apis_by_auth": "catalog.read"
+  },
+  "tool_map": {
+    "public_apis.search_public_apis": "search_public_apis",
+    "public_apis.get_public_api_details": "get_public_api_details"
+  }
+}

@@ -939,7 +939,8 @@ class DashboardServer:
   localStorage.setItem('jarvis_device_token','{dev_tok}');
   setTimeout(function(){{location.replace('/')}},400);
 </script>
-<p>Connecting to JARVIS…</p>
+<div><p>Connecting to JARVIS…</p>
+<p>If this page stays here, <a href="/">open the dashboard manually</a>.</p></div>
 </body></html>""")
 
         @app.post("/api/device-login")

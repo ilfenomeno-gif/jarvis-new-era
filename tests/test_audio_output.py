@@ -46,7 +46,7 @@ def test_play_audio_survives_portaudio_write_failure(monkeypatch):
     live._turn_done_event = None
     live.set_speaking = lambda *_args, **_kwargs: None
     monkeypatch.setattr(main, "get_output_device", lambda: "System default")
-    monkeypatch.setattr(main.audio_devices, "resolve", lambda *_args: None)
+    monkeypatch.setattr(main.audio_devices, "select_output", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(main.sd, "RawOutputStream", lambda **_kwargs: BrokenOutputStream())
 
     async def run():
@@ -69,6 +69,7 @@ def test_play_audio_retries_selected_speaker_failure_on_system_default(monkeypat
     from main import JarvisLive
 
     fallback_write = threading.Event()
+    fallback_reported = threading.Event()
     logs = []
 
     class OutputStream:
@@ -94,6 +95,8 @@ def test_play_audio_retries_selected_speaker_failure_on_system_default(monkeypat
     class UIRecorder:
         def write_log(self, message):
             logs.append(message)
+            if "system default output" in message:
+                fallback_reported.set()
 
         def set_audio_level(self, _level):
             pass
@@ -108,7 +111,11 @@ def test_play_audio_retries_selected_speaker_failure_on_system_default(monkeypat
     live._turn_done_event.set()
     live.set_speaking = lambda *_args, **_kwargs: None
     monkeypatch.setattr(main, "get_output_device", lambda: "Selected speaker")
-    monkeypatch.setattr(main.audio_devices, "resolve", lambda *_args: 7)
+    monkeypatch.setattr(
+        main.audio_devices, "select_output",
+        lambda *_args, **kwargs: None if kwargs.get("exclude") else 7,
+    )
+    monkeypatch.setattr(main.audio_devices, "output_extra_settings", lambda _dev: None)
     monkeypatch.setattr(
         main.sd,
         "RawOutputStream",
@@ -119,6 +126,7 @@ def test_play_audio_retries_selected_speaker_failure_on_system_default(monkeypat
         task = asyncio.create_task(live._play_audio())
         try:
             assert await asyncio.to_thread(fallback_write.wait, 1)
+            assert await asyncio.to_thread(fallback_reported.wait, 1)
             assert any("system default output" in message for message in logs)
         finally:
             task.cancel()

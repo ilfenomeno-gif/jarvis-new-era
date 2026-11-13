@@ -8,6 +8,8 @@ import pytest
 from actions import viewer_3d
 from core.viewer3d import build_call
 
+pytestmark = pytest.mark.isolated
+
 # Real QtWebEngine pages crash natively (stack overflow/access violation) on the windows-latest runner once the
 # docked window is built; they pass locally, so CI skips them rather than reporting a runner-only crash.
 needs_local_gpu_stack = pytest.mark.skipif(
@@ -234,7 +236,7 @@ def test_real_page_loads_and_receives_commands():
     assert state["markers"] == [{"lat": 41.9, "lon": 12.5, "label": "Roma"}]
 
 
-def test_fly_to_and_recon_bring_viewer_to_front():
+def test_empty_viewer_stays_closed_until_a_model_is_loaded():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PyQt6.QtWidgets import QApplication
     import ui as ui_module
@@ -246,13 +248,13 @@ def test_fly_to_and_recon_bring_viewer_to_front():
 
     viewer_3d.viewer_3d({"mode": "fly_to", "lat": 1, "lon": 2}, player=jarvis)
     app.processEvents()
-    assert win._hud_cam_stack.currentWidget() is win._viewer3d
+    assert win._hud_cam_stack.currentWidget() is win._active_hud_widget()
 
     win.show_viewer3d(False)
     assert win._hud_cam_stack.currentWidget() is win._active_hud_widget()
     jarvis.apply_workspace("recon")
     app.processEvents()
-    assert win._hud_cam_stack.currentWidget() is win._viewer3d
+    assert win._hud_cam_stack.currentWidget() is win._active_hud_widget()
 
 
 @needs_local_gpu_stack
@@ -276,6 +278,34 @@ def test_real_page_model_events_restore_viewer_and_report_load_errors():
     assert win._hud_cam_stack.currentWidget() is win._active_hud_widget()
     assert win.hud._projection_status.startswith("MODEL LOAD FAILED")
 
+    win._layout_timer.stop()
+    win.close()
+
+
+def test_gev_chrome_expansion_gives_browser_the_workspace():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PyQt6.QtWidgets import QApplication
+
+    import ui as ui_module
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    jarvis = ui_module.JarvisUI("")
+    win = jarvis._win
+    win.show_gev_tab()
+    win._gev_view_stack.show()
+    win._gev_jarvis_chat.show()
+    win.show_gev_chrome = lambda: None
+
+    win.set_gev_chrome_expanded(True)
+    app.processEvents()
+    assert win._gev_chrome_expand_button.text() == "RIDUCI"
+    assert win._gev_content_splitter.sizes()[1] == 0
+
+    win.set_gev_chrome_expanded(False)
+    app.processEvents()
+    sizes = win._gev_content_splitter.sizes()
+    assert win._gev_chrome_expand_button.text() == "ESPANDI"
+    assert sizes[1] > 0
     win._layout_timer.stop()
     win.close()
 

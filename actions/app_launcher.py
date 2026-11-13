@@ -17,6 +17,8 @@ APP_LAUNCHER_ENV = "JARVIS_APP_LAUNCHER"
 ALLOWED_EXTENSIONS = frozenset({".exe", ".lnk", ".bat", ".msi"})
 SEARCH_TIMEOUT_SECONDS = 5.0
 PROCESS_TIMEOUT_SECONDS = 5.0
+FOCUS_TIMEOUT_SECONDS = 5.0
+FOCUS_RETRY_SECONDS = 0.3
 _BLOCKED_PARTS = frozenset({"downloads", "temp", "tmp"})
 _BLOCKED_EXECUTABLES = frozenset({
     "cmd",
@@ -89,11 +91,13 @@ def _candidate_path(value: str | Path) -> Path | None:
 
 
 def _known_directories() -> tuple[Path, ...]:
-    local_appdata = os.environ.get("LOCALAPPDATA")
+    local_appdata = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
     values = (
         os.environ.get("ProgramFiles"),
         os.environ.get("ProgramFiles(x86)"),
+        os.environ.get("ProgramW6432"),
         str(Path(local_appdata) / "Programs") if local_appdata else None,
+        local_appdata,
         os.environ.get("WINDIR"),
     )
     roots: list[Path] = []
@@ -231,14 +235,17 @@ def _walk_for_name(
                 candidate_name = Path(filename)
                 if candidate_name.suffix.casefold() not in ALLOWED_EXTENSIONS:
                     continue
+                key = _app_key(candidate_name.stem)
+                is_exact = key == requested
+                if not is_exact and not (len(requested) >= 4 and requested in key):
+                    continue
                 candidate = _candidate_path(Path(current) / filename)
                 if candidate is None:
                     continue
-                key = _app_key(candidate_name.stem)
                 identity = os.path.normcase(str(candidate))
-                if key == requested:
+                if is_exact:
                     exact[identity] = candidate
-                elif len(requested) >= 4 and requested in key:
+                else:
                     partial[identity] = candidate
     matches = exact or partial
     return next(iter(matches.values())) if len(matches) == 1 else None
@@ -409,21 +416,57 @@ def _is_console_executable(path: Path) -> bool:
 def _wait_for_launched_app(
     requested: str, path: Path, launch_target: Path
 ) -> str | None:
-    from core.computer_use import wait_for_foreground
-
     try:
-        focused = wait_for_foreground(launch_target.name, timeout=3)
-    except RuntimeError as exc:
-        focused = False
-        detail = str(exc)
+        import psutil
+        import pygetwindow
+        import pywintypes
+        import win32gui
+        import win32process
+    except ImportError as exc:
+        detail = f"Focus dependencies unavailable: {exc}"
     else:
+        deadline = time.monotonic() + FOCUS_TIMEOUT_SECONDS
         detail = f"{launch_target.name} did not become the foreground process"
-    if focused:
-        return None
-    _audit("launch_failed", requested, path, detail)
+        while True:
+            try:
+                for window in pygetwindow.getWindowsWithTitle(""):
+                    hwnd = window._hWnd
+                    if not win32gui.IsWindowVisible(hwnd):
+                        continue
+                    _, pid = win32process.GetWindowThreadProcessId(hwnd)
+                    try:
+                        process_name = psutil.Process(pid).name()
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        continue
+                    if process_name.casefold() != launch_target.name.casefold():
+                        continue
+                    if win32gui.GetForegroundWindow() == hwnd:
+                        return None
+                    try:
+                        if window.isMinimized:
+                            window.restore()
+                        window.activate()
+                    except (OSError, pywintypes.error, pygetwindow.PyGetWindowException) as exc:
+                        detail = f"Window activation failed: {exc}"
+                    if win32gui.GetForegroundWindow() != hwnd:
+                        try:
+                            win32gui.SetForegroundWindow(hwnd)
+                        except (OSError, pywintypes.error) as exc:
+                            detail = f"SetForegroundWindow failed: {exc}"
+                    if win32gui.GetForegroundWindow() == hwnd:
+                        return None
+            except (OSError, pywintypes.error, pygetwindow.PyGetWindowException,
+                    psutil.Error) as exc:
+                detail = f"Could not inspect application window: {exc}"
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            time.sleep(min(FOCUS_RETRY_SECONDS, remaining))
+    _audit("launch_focus_unavailable", requested, path, detail)
+    name = "Notepad" if launch_target.stem.casefold() == "notepad" else requested
     return (
-        f"Could not continue with {requested}: its window did not become "
-        "foreground within 3 seconds."
+        f"Ho aperto {name}, ma non sono riuscito a portarlo in primo piano. "
+        "Controlla la barra delle applicazioni."
     )
 
 

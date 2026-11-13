@@ -5,6 +5,13 @@
   "transport": "streamable-http",
   "auth": "oauth2",
   "endpoint": "https://mcp.higgsfield.ai/mcp",
+  "authorize_url": "https://clerk.higgsfield.ai/oauth/authorize",
+  "token_url": "https://clerk.higgsfield.ai/oauth/token",
+  "registration_url": "https://clerk.higgsfield.ai/oauth/register",
+  "oauth_resource": "https://mcp.higgsfield.ai/mcp",
+  "client_id_env": "JARVIS_HIGGSFIELD_CLIENT_ID",
+  "redirect_uri": "http://127.0.0.1:8769/oauth/higgsfield/callback",
+  "oauth_scopes": ["openid", "email", "offline_access"],
   "scopes": ["media.generate"],
   "tool_refs": {
     "higgsfield.generate": "media.generate"

@@ -17,3 +17,4 @@ status: active
 6. Non fornire argomenti arbitrari. L'unico argomento ammesso è `--help` per app CLI supportate; se l'utente chiede altro, spiegare il limite e chiedere un percorso alternativo autorizzato.
 7. La ricerca senza avvio si può provare con `python -m core.registry_cli app-search <nome>`.
 8. `JARVIS_APP_LAUNCHER=0` disabilita il tool.
+9. Il focus è un tentativo best effort: se l'app è stata avviata ma non passa in primo piano, riferire l'avviso e non inviare input alla finestra.

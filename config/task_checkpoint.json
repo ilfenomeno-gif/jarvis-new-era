@@ -1,0 +1,20 @@
+{
+ "run_id": "e9014a431b4d421f8b6b526e56532324",
+ "objective": "Direct action: generate_3d_model",
+ "status": "failed",
+ "index": 0,
+ "steps": [
+  {
+   "tool": "generate_3d_model",
+   "args": {
+    "show": true,
+    "style": "realistic",
+    "prompt": "blue tornado on a black background"
+   },
+   "risk": "write",
+   "state": "failed",
+   "result": "3D generation failed (local engine): Local 3D generation is not installed. Run 'python -m core.local_3d_gen setup', then 'pip install -r requirements-3d.txt' (see the file for the CUDA build of torch).",
+   "confirmed": true
+  }
+ ]
+}

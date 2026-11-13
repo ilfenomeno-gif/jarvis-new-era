@@ -288,3 +288,26 @@ def test_voice_tool_calls_have_named_error_spans(monkeypatch):
         assert span.status.status_code.name == "ERROR"
     finally:
         provider.shutdown()
+
+
+def test_voice_tool_failure_returns_error_without_ending_live_session():
+    import main
+
+    class Runner:
+        def __init__(self):
+            self.logs = []
+
+        async def _execute_voice_tool(self, _call):
+            raise RuntimeError("tool failed")
+
+    runner = Runner()
+    runner.ui = type("UI", (), {"write_log": lambda _self, message: runner.logs.append(message)})()
+
+    response = asyncio.run(
+        main.JarvisLive._execute_voice_tool_or_error(
+            runner, FunctionCall(name="open_app", args={})
+        )
+    )
+
+    assert response.response == {"error": "Tool failed: RuntimeError: tool failed"}
+    assert runner.logs and "open_app" in runner.logs[0]

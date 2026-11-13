@@ -5,6 +5,13 @@
   "transport": "streamable-http",
   "auth": "oauth2",
   "endpoint": "https://api.githubcopilot.com/mcp/",
+  "authorize_url": "https://github.com/login/oauth/authorize",
+  "token_url": "https://github.com/login/oauth/access_token",
+  "client_id_env": "JARVIS_GITHUB_CLIENT_ID",
+  "client_secret_env": "JARVIS_GITHUB_CLIENT_SECRET",
+  "oauth_setup_url": "https://github.com/settings/applications/new",
+  "redirect_uri": "http://127.0.0.1:8770/oauth/github/callback",
+  "oauth_scopes": ["repo"],
   "scopes": ["repo.read", "issues.write"],
   "tool_refs": {
     "github.search_repositories": "repo.read",

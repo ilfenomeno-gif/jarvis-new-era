@@ -7,6 +7,7 @@ import {
   collapsePanelOnEscape,
   createHoverDisclosure,
 } from './panelDisclosure.js';
+import { PanelVisibilityDock } from './panelVisibilityDock.js';
 const SHARE_PANEL_STATE_SPECS = Object.freeze([
   { id: 'control-panel', pinnable: true },
   { id: 'location-bar', pinnable: true },
@@ -95,6 +96,16 @@ export class PanelChrome {
   }
 
   _initPanelChrome() {
+    this._panelVisibilityDock?.destroy();
+    this._panelVisibilityDock = new PanelVisibilityDock({
+      documentRef: document,
+      onChange: () => {
+        this._scheduleLeftPanelLayout({ reconsiderAutoCollapse: true });
+        this._scheduleRightPanelLayout({ reconsiderAutoCollapse: true });
+        this._updateCommandDockTrayStack();
+      },
+    });
+    this._panelVisibilityDock.init();
     for (const control of this._panelDisclosureControls || [])
       control.destroy();
     this._panelDisclosureControls = [];
@@ -400,6 +411,17 @@ export class PanelChrome {
     if (explicit && !restore)
       this.shareLinkManager?.claimRestoreLane?.('panel', panelId);
     const nextCollapsed = Boolean(collapsed);
+    if (explicit && !restore && !nextCollapsed) {
+      const parentId = {
+        'param-slider-panel': 'pp-toggles',
+        'radio-panel': 'global-context-panel',
+      }[panelId];
+      if (parentId)
+        this._panelVisibilityDock?.setHidden(parentId, false, {
+          persist: false,
+        });
+      this._panelVisibilityDock?.setHidden(panelId, false);
+    }
     const wasAutoCollapsed =
       panelEl.classList.contains('layout-auto-collapsed') ||
       panelEl.classList.contains('cyber-accordion-collapsed');
@@ -619,6 +641,8 @@ export class PanelChrome {
     this._panelDisclosureControls = [];
     this._hoverPanelControls?.forEach((control) => control.destroy());
     this._hoverPanelControls?.clear();
+    this._panelVisibilityDock?.destroy();
+    this._panelVisibilityDock = null;
     this._cancelMapSourceFocus?.();
   }
 }

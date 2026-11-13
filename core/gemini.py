@@ -82,6 +82,7 @@ _KEY_FILE = _BASE / "config" / "api_keys.json"
 FAST = "fast"      # short classification, extraction, one-line decisions
 SMART = "smart"    # reasoning, generation, long documents, images
 SEARCH = "search"  # grounded search — REST only, see below
+CHAT = "chat"      # conversational UI: Live first, then current REST models
 
 # A rung that means "ask the Live model instead", through a short throwaway
 # session rather than the REST text API.
@@ -116,6 +117,8 @@ LIVE = "live"
 _LADDERS = {
     FAST: (LIVE, "gemini-2.5-flash-lite", "gemini-2.5-flash"),
     SMART: (LIVE, "gemini-2.5-flash", "gemini-2.5-flash-lite"),
+    CHAT: (LIVE, "gemini-3.8-flash", "gemini-3.7-flash",
+           "gemini-3.6-flash", "gemini-3.5-flash"),
     # Grounded search needs response.candidates[...].grounding_metadata, which a
     # Live turn does not produce. REST only, and it says so rather than silently
     # returning an answer with no sources behind it.
@@ -156,6 +159,12 @@ _ONE_SHOT_SYSTEM = (
     "JSON. If it asks for code, emit only the code. If it asks for one word, "
     "emit that one word. Preserve the exact spelling, punctuation, capitals "
     "and whitespace of anything you are asked to copy or return."
+)
+_CHAT_SYSTEM = (
+    "You are JARVIS, the user's helpful AI assistant. Respond naturally to the "
+    "current message, use the conversation history when relevant, and answer in "
+    "the user's language. Do not claim that you are not JARVIS or that you are "
+    "only a data-processing function. Be concise unless the user asks for detail."
 )
 
 # Milliseconds. Not a preference: the API rejects anything under ten seconds
@@ -265,23 +274,31 @@ def _to_live_parts(contents) -> list:
     return parts
 
 
-async def _live_turn(parts: list, system: str, key: str, timeout_s: float) -> str:
+async def _live_turn(
+    parts: list,
+    system: str,
+    key: str,
+    timeout_s: float,
+    conversational: bool = False,
+) -> str:
     from google import genai
     from google.genai import types as gtypes
 
     cl = genai.Client(api_key=key, http_options={"api_version": "v1beta"})
-    # Silence the persona, or it answers instead of complying.
+    # One-shot tool calls need exact values rather than a conversational reply.
+    # The chat tier uses its own assistant persona instead.
     #
     # These are conversational models and they behave like it: asked "Reply with
     # one word: ok" a Live turn came back with "Understood." — it treated the
     # instruction as something to acknowledge rather than something to do. The
     # REST models do not, because nobody ever taught them to be in a
     # conversation. Every call through this module wants a value, not a reply,
-    # so the session is told what it is before it is told what to do.
+    # so one-shot sessions are told what they are before being told what to do.
+    base_instruction = _CHAT_SYSTEM if conversational else _ONE_SHOT_SYSTEM
     kwargs = {
         "response_modalities": ["AUDIO"],
         "output_audio_transcription": {},
-        "system_instruction": _ONE_SHOT_SYSTEM + (f"\n\n{system}" if system else ""),
+        "system_instruction": base_instruction + (f"\n\n{system}" if system else ""),
     }
 
     cm = cl.aio.live.connect(model=_live_model(),
@@ -314,7 +331,13 @@ async def _live_turn(parts: list, system: str, key: str, timeout_s: float) -> st
             pass
 
 
-def _live_call(contents, config, timeout_ms: int, key: str):
+def _live_call(
+    contents,
+    config,
+    timeout_ms: int,
+    key: str,
+    conversational: bool = False,
+):
     """One throwaway Live session, run on its own loop in its own thread.
 
     A dedicated thread rather than asyncio.run() on the caller's: these are
@@ -345,7 +368,14 @@ def _live_call(contents, config, timeout_ms: int, key: str):
     def runner():
         try:
             box["text"] = asyncio.run(
-                _live_turn(parts, str(system), key, max(10.0, timeout_ms / 1000.0)))
+                _live_turn(
+                    parts,
+                    str(system),
+                    key,
+                    max(10.0, timeout_ms / 1000.0),
+                    conversational=conversational,
+                )
+            )
         except BaseException as e:                     # noqa: BLE001
             box["error"] = e
 
@@ -362,14 +392,16 @@ def _live_call(contents, config, timeout_ms: int, key: str):
 
 
 def call(contents, tier: str = FAST, config=None,
-         timeout_ms: int = DEFAULT_TIMEOUT_MS, key: str = ""):
+         timeout_ms: int = DEFAULT_TIMEOUT_MS, key: str = "",
+         raise_on_failure: bool = False):
     """Run one generation, walking the ladder until one answers.
 
     Returns the SDK's own response object, so callers that need more than the
     text — grounding metadata, candidates, usage — still get it. Returns None
     when every model on the ladder failed; the reason for each is printed, since
     a silent None during a session nobody can debug is how the original problem
-    stayed hidden.
+    stayed hidden. With `raise_on_failure=True`, it raises an error containing
+    the failures instead of returning None.
     """
     # `tier` is normally FAST or SMART. Anything else is taken to be an explicit
     # model name — screen_agent lets the user pick one in its settings — and it
@@ -382,15 +414,25 @@ def call(contents, tier: str = FAST, config=None,
 
     resolved_key = key or api_key()
     if not resolved_key:
+        if raise_on_failure:
+            raise RuntimeError("no Gemini API key is configured")
         print("[Gemini] no Gemini API key is configured")
         return None
 
     cl = None
+    errors = []
+    last_error = None
     tried = [m for m in ladder if not _cooling(m)] or list(ladder)
     for model in tried:
         try:
             if model == LIVE:
-                reply = _live_call(contents, config, timeout_ms, resolved_key)
+                reply = _live_call(
+                    contents,
+                    config,
+                    timeout_ms,
+                    resolved_key,
+                    conversational=tier == CHAT,
+                )
                 if reply is not None:
                     return reply
                 raise RuntimeError("the Live turn came back empty")
@@ -401,14 +443,78 @@ def call(contents, tier: str = FAST, config=None,
                 kwargs["config"] = config
             return cl.models.generate_content(**kwargs)
         except Exception as e:
+            last_error = e
             msg = str(e)
+            errors.append(f"{model}: {type(e).__name__}: {msg[:140]}")
             if "429" in msg or "RESOURCE_EXHAUSTED" in msg:
                 _cool(model)
                 print(f"[Gemini] {model}: out of quota — skipping it for "
                       f"{_COOLDOWN_SECONDS // 60} minutes")
             else:
                 print(f"[Gemini] {model}: {type(e).__name__}: {msg[:140]}")
+    if raise_on_failure:
+        raise RuntimeError(
+            "All Gemini fallback models failed: " + "; ".join(errors)
+        ) from last_error
     return None
+
+
+def stream(contents, tier: str = CHAT, config=None,
+           timeout_ms: int = DEFAULT_TIMEOUT_MS, key: str = ""):
+    """Yield REST text-generation chunks, falling back only before output starts.
+
+    The Live rung is intentionally omitted: it returns a completed transcription,
+    not incremental text. Once a model has emitted text, retrying another model
+    would duplicate part of the answer.
+    """
+    ladder = _LADDERS.get(tier)
+    if ladder is None:
+        ladder = (tier,) + tuple(model for model in _LADDERS[SMART] if model != tier)
+    ladder = tuple(model for model in ladder if model != LIVE)
+
+    resolved_key = key or api_key()
+    if not resolved_key:
+        raise RuntimeError("no Gemini API key is configured")
+
+    tried = [model for model in ladder if not _cooling(model)] or list(ladder)
+    client_instance = None
+    errors = []
+    last_error = None
+    for model in tried:
+        emitted = False
+        try:
+            if client_instance is None:
+                client_instance = client(timeout_ms=timeout_ms, key=resolved_key)
+            kwargs = {"model": model, "contents": contents}
+            if config is not None:
+                kwargs["config"] = config
+            for chunk in client_instance.models.generate_content_stream(**kwargs):
+                if getattr(chunk, "text", None):
+                    emitted = True
+                    yield chunk
+            if not emitted:
+                raise RuntimeError(f"{model} returned no streamed text")
+            return
+        except Exception as error:
+            if emitted:
+                raise RuntimeError(
+                    f"{model} streaming failed after partial output: {error}"
+                ) from error
+            last_error = error
+            message = str(error)
+            errors.append(f"{model}: {type(error).__name__}: {message[:140]}")
+            if "429" in message or "RESOURCE_EXHAUSTED" in message:
+                _cool(model)
+                print(
+                    f"[Gemini] {model}: out of quota — skipping it for "
+                    f"{_COOLDOWN_SECONDS // 60} minutes"
+                )
+            else:
+                print(f"[Gemini] {model}: {type(error).__name__}: {message[:140]}")
+
+    raise RuntimeError(
+        "All Gemini streaming models failed: " + "; ".join(errors)
+    ) from last_error
 
 
 def text(contents, tier: str = FAST, config=None,

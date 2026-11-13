@@ -1,9 +1,22 @@
 {
   "id": "google-workspace",
   "name": "Google Workspace",
-  "type": "remote-mcp",
-  "transport": "streamable-http",
+  "type": "remote-api",
+  "transport": "api",
   "auth": "oauth2",
+  "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
+  "token_url": "https://oauth2.googleapis.com/token",
+  "client_id_env": "JARVIS_GOOGLE_CLIENT_ID",
+  "client_secret_env": "JARVIS_GOOGLE_CLIENT_SECRET",
+  "redirect_uri": "http://127.0.0.1:8766/oauth/google/callback",
+  "authorize_params": {
+    "access_type": "offline",
+    "prompt": "consent"
+  },
+  "oauth_scopes": [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/calendar"
+  ],
   "scopes": ["gmail.read", "gmail.send", "calendar.read", "calendar.write", "drive.read"],
   "tool_refs": {
     "gmail.search": "gmail.read",

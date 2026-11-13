@@ -1,0 +1,30 @@
+{
+  "errors": {},
+  "granted": {
+    "canva": [
+      "design.read",
+      "design.write"
+    ],
+    "github": [
+      "issues.write",
+      "repo.read"
+    ],
+    "google-workspace": [
+      "calendar.read",
+      "calendar.write",
+      "drive.read",
+      "gmail.read",
+      "gmail.send"
+    ],
+    "higgsfield": [
+      "media.generate"
+    ],
+    "public-apis": [
+      "catalog.read"
+    ],
+    "spotify": [
+      "playback.control",
+      "playback.read"
+    ]
+  }
+}

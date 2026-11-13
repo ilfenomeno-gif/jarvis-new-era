@@ -4,6 +4,8 @@ from datetime import datetime
 from threading import Lock
 from pathlib import Path
 import sys
+import os
+import tempfile
 
 from core.guardrails import redact_sensitive
 
@@ -18,6 +20,56 @@ BASE_DIR         = get_base_dir()
 MEMORY_PATH      = BASE_DIR / "memory" / "long_term.json"
 _lock            = Lock()
 MAX_VALUE_LENGTH = 380
+USER_PROFILE_PATH = BASE_DIR / "config" / "user_profile.json"
+_profile_lock = Lock()
+
+
+def load_user_profile() -> dict:
+    with _profile_lock:
+        if not USER_PROFILE_PATH.exists():
+            return {"preferences": {}, "facts": {}}
+        data = json.loads(USER_PROFILE_PATH.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("Il profilo utente deve essere un oggetto JSON.")
+        for field in ("preferences", "facts"):
+            if field not in data:
+                data[field] = {}
+            if not isinstance(data[field], dict):
+                raise ValueError(f"Sezione profilo non valida: {field}.")
+        return data
+
+
+def update_user_profile(section: str, key: str, value: str) -> dict:
+    if section not in {"preferences", "facts"} or not key or not value or len(value) > MAX_VALUE_LENGTH:
+        raise ValueError("Preferenza o fatto non valido.")
+    if redact_sensitive(value) != value or re.search(
+        r"\b(?:password|passwd|credenzial\w*|token|segreto|secret|api[\s_-]*key|codic[ei]\s+di\s+recupero)\b",
+        key + " " + value, re.I,
+    ):
+        raise ValueError("Le credenziali non possono essere salvate nel profilo.")
+    with _profile_lock:
+        if USER_PROFILE_PATH.exists():
+            data = json.loads(USER_PROFILE_PATH.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise ValueError("Il profilo utente deve essere un oggetto JSON.")
+        else:
+            data = {}
+        for field in ("preferences", "facts"):
+            if field not in data:
+                data[field] = {}
+            if not isinstance(data[field], dict):
+                raise ValueError(f"Sezione profilo non valida: {field}.")
+        data[section][key] = value
+        USER_PROFILE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        fd, temporary = tempfile.mkstemp(prefix=".user-profile-", suffix=".tmp", dir=USER_PROFILE_PATH.parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+                json.dump(data, handle, ensure_ascii=False, indent=2)
+            os.replace(temporary, USER_PROFILE_PATH)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+        return data
 
 # ── Why there are two very different numbers here ────────────────────────────
 #

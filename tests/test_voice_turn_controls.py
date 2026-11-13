@@ -52,7 +52,7 @@ def test_interrupt_during_playback_stops_queue_and_releases_listening(monkeypatc
 
     live.set_speaking = set_speaking
     monkeypatch.setattr(main, "get_output_device", lambda: None)
-    monkeypatch.setattr(main.audio_devices, "resolve", lambda *_args: None)
+    monkeypatch.setattr(main.audio_devices, "select_output", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
         main.sd,
         "RawOutputStream",

@@ -6,6 +6,8 @@ allowed_executables:
   - dir
   - pwd
   - whoami
+  - ipconfig
+  - ping
 blocked_patterns:
   - pattern: '(?i)(?:^|[\s;&|])rm\s+(?:-[^\s]*r[^\s]*f|-[^\s]*f[^\s]*r)\s+(?:/|/\*|~/?|[A-Za-z]:\\(?:\\)?)(?:\s|$)'
     reason: recursive forced deletion of a root or drive

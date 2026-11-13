@@ -229,7 +229,19 @@ class PipelineEngine:
 
     # ── history ──────────────────────────────────────────────────────────────
     def _messages(self) -> list[dict]:
-        msgs = [{"role": "system", "content": self._system}] if self._system else []
+        from core.context_awareness import current_prompt_context
+        from core.personality_engine import current_personality_prompt
+
+        context = current_prompt_context()
+        system = self._system
+        if system.startswith("Istruzione di personalità attuale:") and "\n" in system:
+            system = system.partition("\n")[2].lstrip("\n")
+        personality = current_personality_prompt()
+        if personality:
+            system = personality + "\n\n" + system
+        if context:
+            system = system + "\n\nStato più recente:\n" + context
+        msgs = [{"role": "system", "content": system}] if system else []
         return msgs + self._trimmed()
 
     def _trimmed(self) -> list[dict]:
@@ -642,6 +654,10 @@ class PipelineEngine:
         if self._tts is None:
             return
         text = _speakable(text)
+        language = getattr(self._stt, "detected_language", "")
+        if not language or language.casefold().startswith("it"):
+            from core.tts import normalize_text_for_tts
+            text = normalize_text_for_tts(text)
         if not text.strip():
             return
         from . import audio as _a
@@ -653,7 +669,13 @@ class PipelineEngine:
         # one per language. A voice that does not take the argument never sees
         # it — this is the only place that knows both halves.
         kwargs = {}
-        language = getattr(self._stt, "detected_language", "")
+        if _accepts_parameter(self._tts, "speed_multiplier"):
+            from core.context_awareness import current_context
+            from core.personality_engine import PersonalityEngine
+
+            context = current_context()
+            if context is not None:
+                kwargs["speed_multiplier"] = PersonalityEngine().speed_multiplier(context)
         if language and _accepts_language(self._tts):
             kwargs["language"] = language
         try:
@@ -1058,10 +1080,14 @@ def _accepts_language(tts) -> bool:
     change language at all, and Piper has one model per language and needs to be
     told. Introspection keeps that a property of each provider rather than a
     list kept here that goes stale."""
+    return _accepts_parameter(tts, "language")
+
+
+def _accepts_parameter(tts, name: str) -> bool:
     import inspect
     try:
-        return "language" in inspect.signature(tts.speak).parameters
-    except Exception:
+        return name in inspect.signature(tts.speak).parameters
+    except (TypeError, ValueError):
         return False
 
 

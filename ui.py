@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import atexit
+import html
 import json
 import logging
 import math
@@ -12,6 +13,7 @@ import subprocess
 import sys
 import threading
 import time
+import webbrowser
 from pathlib import Path
 
 import psutil
@@ -24,17 +26,19 @@ else:
 from PyQt6.QtCore import (
     QEasingCurve, QMimeData, QObject, QPointF, QRectF, QSize, Qt,
     QPropertyAnimation,
-    QThread, QTimer, QUrl, pyqtSignal, pyqtSlot,
+    QSettings, QThread, QTimer, QUrl, pyqtSignal, pyqtSlot,
 )
 from PyQt6.QtGui import (
-    QBrush, QColor, QConicalGradient, QDragEnterEvent, QDropEvent, QFont,
+    QBrush, QColor, QConicalGradient, QDesktopServices, QDragEnterEvent, QDropEvent, QFont,
     QFontDatabase, QKeySequence, QLinearGradient, QPainter, QPainterPath,
     QPen, QPixmap, QRadialGradient, QShortcut,
 )
 from PyQt6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QDialog, QDockWidget, QFileDialog, QFrame,
-    QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QPlainTextEdit, QPushButton,
+    QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDockWidget,
+    QFileDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QLineEdit, QMainWindow,
+    QMenu, QMessageBox, QPlainTextEdit, QPushButton,
     QScrollArea, QSizePolicy, QSplitter, QStackedWidget, QTabWidget, QTextEdit,
+    QToolButton,
     QVBoxLayout, QWidget, QProgressBar,
 )
 from PyQt6.QtTest import QTest
@@ -54,7 +58,11 @@ from core.ui_panels import (
 from core.page_reader import PageSpeechWorker, build_page_read_script
 from core.browser_url import is_allowed_http_scheme, normalize_http_url
 from core.hud_animator import HudAnimator, STATE_NAMES
+from core.oauth_flow import GOOGLE_CLIENT_ID_ERROR, is_google_client_id_valid
+from core.browser_automation import BrowserAutomation
+from core.gev_chrome import open_chrome_url
 from gemini_chat_window import GeminiChatPanel, GeminiChatWindow
+from gev_chat import GevJarvisChat
 
 _GEV_URL = "http://127.0.0.1:4173/?ui=panels"
 
@@ -1945,7 +1953,7 @@ class CustomizeOverlay(QWidget):
     install_wake_word_requested = pyqtSignal()
     _OW, _OH = 420, 740
 
-    def __init__(self, assistant_name="JARVIS", user_name="",
+    def __init__(self, assistant_name="IRIS", user_name="",
                  ui_color=DEFAULT_UI_COLOR, voice="", page_reader_engine="system",
                  wake_word_enabled=False, full_duplex_enabled=False,
                  page_reader_speed=1.0,
@@ -2066,8 +2074,9 @@ class CustomizeOverlay(QWidget):
         lay.addWidget(self._page_reader_speed)
 
         lay.addSpacing(4)
+        from core.wake_word import WAKE_PHRASE
         self._wake_word_checkbox = QCheckBox(
-            "Enable local wake phrase (Hey Jarvis)"
+            f"Enable local wake phrase ({WAKE_PHRASE})"
         )
         self._wake_word_checkbox.setChecked(bool(wake_word_enabled))
         self._wake_word_checkbox.setToolTip(
@@ -2092,8 +2101,9 @@ class CustomizeOverlay(QWidget):
             bool(full_duplex_enabled) and not bool(wake_word_enabled)
         )
         self._full_duplex_checkbox.setToolTip(
-            "Experimental: while JARVIS speaks, a local echo classifier may "
-            "interrupt on detected speech. Test with your own microphone and speakers."
+            "Experimental: while JARVIS speaks, local voice detection stops "
+            "playback and queues your recognized request. Test with your own "
+            "microphone and speakers."
         )
         self._full_duplex_checkbox.setStyleSheet(self._wake_word_checkbox.styleSheet())
         self._wake_word_checkbox.toggled.connect(
@@ -2741,17 +2751,22 @@ class MemoryOverlay(_HudOverlay):
             scroll.setFixedHeight(min(420, 34 * len(rows) + 10))
             scroll.setStyleSheet(
                 f"QScrollArea {{ border: 1px solid {C.BORDER}; border-radius: 3px; "
-                f"background: transparent; }}"
+                f"background: {C.PANEL}; }}"
             )
             inner = QWidget()
+            inner.setStyleSheet(
+                f"background: {C.PANEL}; color: {C.TEXT};"
+            )
             ilay  = QVBoxLayout(inner)
             ilay.setContentsMargins(6, 6, 6, 6)
             ilay.setSpacing(3)
 
             for r in rows:
                 line = QHBoxLayout(); line.setSpacing(6)
-                txt = QLabel(f"<b>{r['key'].replace('_', ' ')}</b> "
-                             f"<span style='color:{C.TEXT_MED}'>— {r['value']}</span>")
+                key = html.escape(str(r["key"]).replace("_", " "))
+                value = html.escape(str(r["value"]))
+                txt = QLabel(f"<b>{key}</b> "
+                             f"<span style='color:{C.TEXT_MED}'>— {value}</span>")
                 txt.setWordWrap(True)
                 txt.setFont(QFont("Courier New", 8))
                 txt.setStyleSheet(f"color: {C.TEXT}; background: transparent;")
@@ -3154,6 +3169,46 @@ class HudDock(QDockWidget):
             self.closed_by_user.emit(self.panel_name)
 
 
+class _PublicApisQueryThread(QThread):
+    def __init__(self, query: str, callback, parent=None) -> None:
+        super().__init__(parent)
+        self._query = query
+        self._callback = callback
+        self.result = ""
+        self.error = ""
+
+    def run(self) -> None:
+        try:
+            self.result = str(self._callback(self._query))
+        except Exception as exc:
+            self.error = f"{type(exc).__name__}: {exc}"
+
+
+class _OAuthCredentialTestThread(QThread):
+    completed = pyqtSignal(bool, str)
+
+    def __init__(self, callback, connector_id: str, client_id: str, client_secret: str, parent=None):
+        super().__init__(parent)
+        self._callback = callback
+        self._connector_id = connector_id
+        self._client_id = client_id
+        self._client_secret = client_secret
+
+    def run(self) -> None:
+        try:
+            message = str(
+                self._callback(
+                    self._connector_id,
+                    self._client_id,
+                    self._client_secret,
+                )
+            )
+        except Exception as exc:
+            self.completed.emit(False, f"{type(exc).__name__}: {exc}")
+        else:
+            self.completed.emit(True, message)
+
+
 class MainWindow(QMainWindow):
     _log_sig          = pyqtSignal(str)
     _state_sig        = pyqtSignal(str)
@@ -3168,12 +3223,18 @@ class MainWindow(QMainWindow):
     _cam_stream_sig   = pyqtSignal(bool)       # True=start live stream, False=stop
     _cam_frame_sig    = pyqtSignal(bytes)      # live camera frame → HUD area
     _clipboard_sig    = pyqtSignal(str)        # clipboard text changed (thread-safe)
-    _confirm_sig      = pyqtSignal(str, str)   # (title, detail) — irreversible-action gate
-    _confirm_hide_sig = pyqtSignal()
+    _confirm_sig      = pyqtSignal(str, str, str)   # (key, title, detail)
+    _confirm_hide_sig = pyqtSignal(str)
     _widget_sig       = pyqtSignal(dict)       # (spec) — generic widget bus, thread-safe
     _gev_send_sig     = pyqtSignal(str)
+    _gev_show_sig = pyqtSignal()
+    _gev_chrome_show_sig = pyqtSignal()
+    _gev_chrome_expand_sig = pyqtSignal(bool)
+    _gev_chat_message_sig = pyqtSignal(str, str)
+    _gev_chrome_result_sig = pyqtSignal(bool, str, str)
     _gemini_chat_sig  = pyqtSignal()
     _streaming_play_confirm_sig = pyqtSignal(str, object)
+    _dependency_install_confirm_sig = pyqtSignal(str, object)
     _browser_open_sig = pyqtSignal(str)
     _task_browser_open_sig = pyqtSignal(str, str, object)
     _task_browser_close_sig = pyqtSignal(str)
@@ -3206,6 +3267,7 @@ class MainWindow(QMainWindow):
         self._gev_message_dispatch = None
         self._gemini_chat_window: GeminiChatWindow | None = None
         self._gemini_chat_panel: GeminiChatPanel | None = None
+        self._browser_automation = BrowserAutomation()
         self._gemini_previous_widget: QWidget | None = None
         self._task_browser_dialog: QDialog | None = None
         self._task_browser_tabs: QTabWidget | None = None
@@ -3232,7 +3294,7 @@ class MainWindow(QMainWindow):
 
         # Load customization from config
         _cfg = _read_full_config()
-        self._assistant_name: str = (_cfg.get("assistant_name") or "JARVIS").strip()
+        self._assistant_name: str = (_cfg.get("assistant_name") or "IRIS").strip()
         _display = self._assistant_name.upper()
 
         # Kayıtlı UI rengini panel/stylesheet'ler kurulmadan ÖNCE uygula
@@ -3262,6 +3324,19 @@ class MainWindow(QMainWindow):
         self.on_audio_device_change = None  # callable: () -> None — reopen audio streams
         self._confirm_overlay  = None   # live ConfirmBanner, if one is on screen
         self.get_plugins       = None   # callable: () -> list[dict], set by JarvisLive
+        self.get_connectors = None
+        self.begin_connector_oauth = None
+        self.save_connector_oauth_credentials = None
+        self.save_connector_token = None
+        self.test_connector_oauth = None
+        self._oauth_test_workers: set[QThread] = set()
+        self.grant_connector_scopes = None
+        self.set_connector_scopes = None
+        self.revoke_connector = None
+        self.get_public_apis_status = None
+        self.activate_public_apis = None
+        self.query_public_apis = None
+        self._public_apis_workers: set[QThread] = set()
         self.get_hud_runtime  = None   # callable: () -> runtime telemetry, set by JarvisLive
         self._muted            = False
         self._current_file: str | None = None
@@ -3339,10 +3414,19 @@ class MainWindow(QMainWindow):
         self._hud_cam_stack.addWidget(_cam_cont)
 
         self._gev_stack = QStackedWidget()
-        self._gev_placeholder = QLabel("GEV NON CARICATO")
-        self._gev_placeholder.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._gev_placeholder.setStyleSheet(
+        self._gev_placeholder = QWidget()
+        gev_placeholder_layout = QVBoxLayout(self._gev_placeholder)
+        gev_placeholder_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._gev_placeholder_label = QLabel("GEV NON CARICATO")
+        self._gev_placeholder_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._gev_placeholder_label.setStyleSheet(
             f"color: {C.TEXT_DIM}; background: #000308; font-family: 'Courier New';"
+        )
+        gev_placeholder_layout.addWidget(self._gev_placeholder_label)
+        gev_placeholder_home = QPushButton("← JARVIS HOME")
+        gev_placeholder_home.clicked.connect(self.hide_gev_tab)
+        gev_placeholder_layout.addWidget(
+            gev_placeholder_home, alignment=Qt.AlignmentFlag.AlignCenter
         )
         self._gev_view = QWebEngineView()
         self._gev_page = _GEVWebEnginePage(self._gev_view, self._on_gev_message)
@@ -3352,7 +3436,100 @@ class MainWindow(QMainWindow):
         )
         self._gev_view.loadFinished.connect(self._on_gev_load_finished)
         self._gev_stack.addWidget(self._gev_placeholder)
-        self._gev_stack.addWidget(self._gev_view)
+        self._gev_workspace = QWidget()
+        gev_layout = QVBoxLayout(self._gev_workspace)
+        gev_layout.setContentsMargins(0, 0, 0, 0)
+        gev_layout.setSpacing(0)
+        gev_toolbar = QWidget()
+        gev_toolbar.setStyleSheet(
+            f"background: {C.DARK}; border-bottom: 1px solid {C.BORDER};"
+        )
+        gev_toolbar_layout = QHBoxLayout(gev_toolbar)
+        gev_toolbar_layout.setContentsMargins(8, 4, 8, 4)
+        gev_home_button = QPushButton("← JARVIS HOME")
+        gev_home_button.setToolTip("Return to the JARVIS home screen")
+        gev_home_button.clicked.connect(self.hide_gev_tab)
+        gev_toolbar_layout.addWidget(gev_home_button)
+        self._gev_chrome_toggle = QPushButton("●")
+        self._gev_chrome_toggle.setAccessibleName("Chrome panel visibility")
+        self._gev_chrome_toggle.setCheckable(True)
+        self._gev_chrome_toggle.setToolTip("Show or hide the Chrome panel")
+        self._gev_chrome_toggle.setFixedSize(26, 26)
+        self._gev_chrome_toggle.setStyleSheet(
+            f"QPushButton {{ color: {C.TEXT_DIM}; padding: 0; }}"
+            f"QPushButton:checked {{ color: {C.PRI}; border-color: {C.PRI}; }}"
+        )
+        gev_toolbar_layout.addWidget(self._gev_chrome_toggle)
+        self._gev_chat_toggle = QPushButton("●")
+        self._gev_chat_toggle.setAccessibleName("Chat panel visibility")
+        self._gev_chat_toggle.setCheckable(True)
+        self._gev_chat_toggle.setToolTip("Show or hide the chat panel")
+        self._gev_chat_toggle.setFixedSize(26, 26)
+        self._gev_chat_toggle.setStyleSheet(
+            f"QPushButton {{ color: {C.TEXT_DIM}; padding: 0; }}"
+            f"QPushButton:checked {{ color: {C.PRI}; border-color: {C.PRI}; }}"
+        )
+        gev_toolbar_layout.addWidget(self._gev_chat_toggle)
+        gev_map_button = QPushButton("3D MAP")
+        gev_map_button.setToolTip("Show the Cesium God’s Eye View map")
+        gev_map_button.clicked.connect(lambda: self.load_gev())
+        gev_toolbar_layout.addWidget(gev_map_button)
+        gemini_button = QPushButton("GEMINI CHAT")
+        gemini_button.setToolTip(
+            "Open the separate Gemini chat; JARVIS remains the GEV command chat."
+        )
+        gemini_button.clicked.connect(self._show_gemini_chat)
+        gev_toolbar_layout.addWidget(gemini_button)
+        gev_toolbar_layout.addStretch()
+        gev_layout.addWidget(gev_toolbar)
+        gev_content = QSplitter(Qt.Orientation.Horizontal)
+        self._gev_view_stack = QStackedWidget()
+        self._gev_chrome_panel = self._build_gev_chrome_panel()
+        self._gev_view_stack.addWidget(self._gev_chrome_panel)
+        self._gev_view_stack.addWidget(self._gev_view)
+        self._gev_view_stack.setCurrentWidget(self._gev_chrome_panel)
+        gev_content.addWidget(self._gev_view_stack)
+        self._gev_jarvis_chat = GevJarvisChat()
+        self._gev_jarvis_chat.commandSubmitted.connect(
+            self._submit_gev_jarvis_command
+        )
+        self._gev_jarvis_chat.setMinimumWidth(280)
+        self._gev_jarvis_chat.setMaximumWidth(420)
+        gev_content.addWidget(self._gev_jarvis_chat)
+        gev_content.setCollapsible(0, False)
+        gev_content.setCollapsible(1, True)
+        gev_content.setStretchFactor(0, 1)
+        gev_content.setStretchFactor(1, 0)
+        gev_content.setSizes([max(1, gev_content.width() - 340), 340])
+        gev_layout.addWidget(gev_content, stretch=1)
+        gev_content_settings = QSettings("JarvisVII", "GEV")
+        chrome_visible = gev_content_settings.value(
+            "chrome_visible", True, type=bool
+        )
+        chat_visible = gev_content_settings.value("chat_visible", True, type=bool)
+        self._gev_panel_visibility = {
+            "chrome": chrome_visible,
+            "chat": chat_visible,
+        }
+        self._gev_chrome_toggle.setChecked(chrome_visible)
+        self._gev_chat_toggle.setChecked(chat_visible)
+        self._gev_chrome_toggle.toggled.connect(
+            lambda visible: self._set_gev_panel_visible(
+                "chrome", visible, gev_content
+            )
+        )
+        self._gev_chat_toggle.toggled.connect(
+            lambda visible: self._set_gev_panel_visible(
+                "chat", visible, gev_content
+            )
+        )
+        self._gev_view_stack.setVisible(chrome_visible)
+        self._gev_jarvis_chat.setVisible(chat_visible)
+        self._gev_panel_splitter = gev_content
+        self._gev_content_splitter = gev_content
+        self._gev_chrome_expanded = False
+        QTimer.singleShot(0, self._apply_gev_content_sizes)
+        self._gev_stack.addWidget(self._gev_workspace)
         self._gev_stack.setCurrentWidget(self._gev_placeholder)
         self._hud_cam_stack.addWidget(self._gev_stack)
 
@@ -3476,9 +3653,17 @@ class MainWindow(QMainWindow):
         self._content_hide_sig.connect(self._hide_content_if)
         self._widget_sig.connect(self._on_widget)
         self._gev_send_sig.connect(self._on_gev_send)
+        self._gev_show_sig.connect(self.show_gev_tab)
+        self._gev_chrome_show_sig.connect(self.show_gev_chrome)
+        self._gev_chrome_expand_sig.connect(self.set_gev_chrome_expanded)
+        self._gev_chat_message_sig.connect(self._on_gev_chat_message)
+        self._gev_chrome_result_sig.connect(self._on_gev_chrome_result)
         self._gemini_chat_sig.connect(self._show_gemini_chat)
         self._streaming_play_confirm_sig.connect(
             self._confirm_streaming_play_on_ui_thread
+        )
+        self._dependency_install_confirm_sig.connect(
+            self._confirm_dependency_install_on_ui_thread
         )
         self._browser_open_sig.connect(self._open_url_in_webview)
         self._task_browser_open_sig.connect(self._open_task_browser)
@@ -3837,6 +4022,11 @@ class MainWindow(QMainWindow):
 
     def show_viewer3d(self, visible: bool) -> None:
         if visible:
+            if not self._viewer3d_models:
+                self._log_sig.emit(
+                    "Viewer 3D: nessun modello caricato; visualizzazione vuota non aperta."
+                )
+                return
             view = self._viewer3d_ensure()
             self._hud_cam_stack.setCurrentWidget(view)
             self._main_content_stack.setCurrentWidget(self._browser_split)
@@ -3969,27 +4159,40 @@ class MainWindow(QMainWindow):
     def stop_camera_stream(self) -> None:
         self._cam_stop.set()
 
-    def load_gev(self) -> None:
+    def load_gev(self, *, select_map: bool = True) -> None:
+        """Load the retained Cesium map inside the Chrome-centric GEV workspace."""
         self._main_content_stack.setCurrentWidget(self._browser_split)
         self._hud_cam_stack.setCurrentWidget(self._gev_stack)
+        self._gev_stack.setCurrentWidget(self._gev_workspace)
+        if select_map:
+            self._gev_view_stack.setCurrentWidget(self._gev_view)
         if self._gev_load_started:
             return
         self._gev_load_started = True
         self._gev_ready_evt.clear()
-        self._gev_placeholder.setText("AVVIO GOD'S EYE VIEW…")
-        self._gev_stack.setCurrentWidget(self._gev_placeholder)
+        self._gev_placeholder_label.setText("AVVIO GOD'S EYE VIEW…")
         self._gev_view.load(QUrl(_gev_url()))
 
     def show_gev_tab(self) -> None:
-        """Expand GEV in the center pane and expose its main navigation panels."""
+        """Show the GEV workspace without changing its selected view."""
         if not self._gev_tab_open:
             self._gev_previous_content_visible = not self._content_panel.isHidden()
             self._gev_previous_split_sizes = self._center_split.sizes()
         self._gev_tab_open = True
         self._content_panel.hide()
-        self.load_gev()
+        self._main_content_stack.setCurrentWidget(self._browser_split)
+        self._hud_cam_stack.setCurrentWidget(self._gev_stack)
+        self._gev_stack.setCurrentWidget(self._gev_workspace)
         self._center_split.setSizes([self._center_split.height(), 0])
         self._expand_gev_navigation_panels()
+
+    def show_gev_chrome(self) -> None:
+        """Open GEV in the user's normal Chrome profile."""
+        self._gev_chrome_toggle.setChecked(True)
+        self._gev_view_stack.setCurrentWidget(self._gev_chrome_panel)
+        self.show_gev_tab()
+        self._apply_gev_content_sizes()
+        self._run_gev_chrome_action("start")
 
     def hide_gev_tab(self) -> None:
         """Return to Jarvis's HUD while keeping the GEV page loaded."""
@@ -4005,6 +4208,162 @@ class MainWindow(QMainWindow):
         if len(self._gev_previous_split_sizes) == 2:
             self._center_split.setSizes(self._gev_previous_split_sizes)
         self._gev_previous_split_sizes = []
+
+    def _build_gev_chrome_panel(self) -> QWidget:
+        panel = QWidget()
+        panel.setObjectName("GEVChromePanel")
+        panel.setStyleSheet(
+            f"QWidget#GEVChromePanel {{ background: {C.DARK}; }}"
+            f"QLineEdit {{ background: #000d12; color: {C.TEXT}; "
+            f"border: 1px solid {C.BORDER}; padding: 5px 8px; }}"
+            f"QPushButton {{ background: {C.PANEL}; color: {C.PRI}; "
+            f"border: 1px solid {C.BORDER}; padding: 4px 9px; }}"
+        )
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setSpacing(5)
+        toolbar = QHBoxLayout()
+        self._gev_chrome_address = QLineEdit()
+        self._gev_chrome_address.setPlaceholderText("https://…")
+        self._gev_chrome_address.returnPressed.connect(
+            self._navigate_gev_chrome_address
+        )
+        toolbar.addWidget(self._gev_chrome_address, stretch=1)
+        go_button = QPushButton("GO")
+        go_button.clicked.connect(self._navigate_gev_chrome_address)
+        toolbar.addWidget(go_button)
+        self._gev_chrome_expand_button = QPushButton("ESPANDI")
+        self._gev_chrome_expand_button.setToolTip(
+            "Espandi l'area GEV; la chat resta montata e si ripristina con RIDUCI"
+        )
+        self._gev_chrome_expand_button.clicked.connect(
+            lambda: self.set_gev_chrome_expanded(not self._gev_chrome_expanded)
+        )
+        toolbar.addWidget(self._gev_chrome_expand_button)
+        layout.addLayout(toolbar)
+        self._gev_chrome_status = QLabel(
+            "I link si aprono in una scheda di Chrome usando il profilo predefinito. "
+            "Controlli e zoom si eseguono nella finestra di Chrome."
+        )
+        self._gev_chrome_status.setStyleSheet(
+            f"color: {C.TEXT_DIM}; background: transparent;"
+        )
+        layout.addWidget(self._gev_chrome_status)
+        layout.addStretch(1)
+        return panel
+
+    def _navigate_gev_chrome_address(self) -> None:
+        raw_url = self._gev_chrome_address.text().strip()
+        if not raw_url:
+            return
+        url = raw_url if "://" in raw_url else f"https://{raw_url}"
+        self._run_gev_chrome_action("navigate", url)
+
+    def _run_gev_chrome_action(self, action: str, value: str = "") -> None:
+        self._gev_chrome_status.setText("Chrome sta elaborando il comando…")
+
+        def run() -> None:
+            try:
+                if action == "start":
+                    url = _gev_url()
+                elif action == "navigate":
+                    url = value
+                else:
+                    raise ValueError(f"Unsupported GEV Chrome action: {action}")
+                open_chrome_url(url)
+                self._gev_chrome_result_sig.emit(
+                    True,
+                    "Pagina aperta in Chrome con il profilo predefinito.",
+                    url,
+                )
+            except Exception as exc:
+                self._gev_chrome_result_sig.emit(
+                    False,
+                    f"Chrome non disponibile: {type(exc).__name__}: {exc}",
+                    "",
+                )
+
+        threading.Thread(
+            target=run,
+            daemon=True,
+            name="jarvis-gev-chrome-ui",
+        ).start()
+
+    def _on_gev_chrome_result(
+        self, succeeded: bool, message: str, current_url: str
+    ) -> None:
+        self._gev_chrome_status.setText(message)
+        if succeeded and current_url:
+            self._gev_chrome_address.setText(current_url)
+
+    def _submit_gev_jarvis_command(self, command: str) -> None:
+        callback = self.on_text_command
+        if not callable(callback):
+            self._gev_chat_message_sig.emit(
+                "system", "JARVIS non è ancora connesso."
+            )
+            return
+        threading.Thread(
+            target=callback,
+            args=(command,),
+            daemon=True,
+            name="jarvis-gev-chat-command",
+        ).start()
+
+    def _on_gev_chat_message(self, role: str, text: str) -> None:
+        self._gev_jarvis_chat.add_message(role, text)
+
+    def _set_gev_panel_visible(
+        self, panel: str, visible: bool, splitter: QSplitter
+    ) -> None:
+        widgets = {
+            "chrome": (self._gev_view_stack, self._gev_chrome_toggle),
+            "chat": (self._gev_jarvis_chat, self._gev_chat_toggle),
+        }
+        widget_toggle = widgets.get(panel)
+        if widget_toggle is None:
+            raise ValueError(f"Unknown GEV panel: {panel}")
+        widget, toggle = widget_toggle
+        self._gev_panel_visibility[panel] = visible
+        widget.setVisible(visible)
+        toggle.setChecked(visible)
+        QSettings("JarvisVII", "GEV").setValue(f"{panel}_visible", visible)
+        width = max(splitter.width(), 640)
+        if self._gev_view_stack.isVisible() and self._gev_jarvis_chat.isVisible():
+            if self._gev_chrome_expanded:
+                splitter.setSizes([width, 0])
+            else:
+                chat_width = min(360, max(280, width // 4))
+                splitter.setSizes([width - chat_width, chat_width])
+        elif self._gev_view_stack.isVisible():
+            splitter.setSizes([width, 0])
+        elif self._gev_jarvis_chat.isVisible():
+            splitter.setSizes([0, width])
+
+    def _apply_gev_content_sizes(self) -> None:
+        splitter = getattr(self, "_gev_content_splitter", None)
+        if splitter is None:
+            return
+        width = max(splitter.width(), 640)
+        if self._gev_view_stack.isVisible() and self._gev_jarvis_chat.isVisible():
+            if self._gev_chrome_expanded:
+                splitter.setSizes([width, 0])
+            else:
+                chat_width = min(360, max(280, width // 4))
+                splitter.setSizes([width - chat_width, chat_width])
+        elif self._gev_view_stack.isVisible():
+            splitter.setSizes([width, 0])
+        elif self._gev_jarvis_chat.isVisible():
+            splitter.setSizes([0, width])
+
+    def set_gev_chrome_expanded(self, expanded: bool) -> None:
+        if expanded:
+            self.show_gev_chrome()
+        self._gev_chrome_expanded = bool(expanded)
+        self._gev_chrome_expand_button.setText(
+            "RIDUCI" if self._gev_chrome_expanded else "ESPANDI"
+        )
+        self._apply_gev_content_sizes()
 
     def _build_browser_panel(self) -> QWidget:
         panel = QWidget()
@@ -4045,6 +4404,24 @@ class MainWindow(QMainWindow):
         self._browser_address.setPlaceholderText("https://example.com")
         self._browser_address.returnPressed.connect(self._navigate_browser_address)
         toolbar.addWidget(self._browser_address, stretch=1)
+
+        self._browser_external_button = QToolButton()
+        self._browser_external_button.setText("↗")
+        self._browser_external_button.setToolTip("Apri nel browser esterno")
+        self._browser_external_button.setAccessibleName(
+            "Apri nel browser esterno"
+        )
+        self._browser_external_button.setFixedSize(32, 32)
+        self._browser_external_button.setStyleSheet(
+            f"QToolButton {{ background: {C.PANEL}; color: {C.PRI}; "
+            f"border: 1px solid {C.BORDER}; border-radius: 16px; "
+            f"font-size: 16px; padding: 0; }}"
+            f"QToolButton:hover {{ border-color: {C.PRI}; }}"
+        )
+        self._browser_external_button.clicked.connect(
+            self._open_current_browser_externally
+        )
+        toolbar.addWidget(self._browser_external_button)
 
         close_button = QPushButton("CLOSE")
         close_button.clicked.connect(self.close_browser)
@@ -4213,12 +4590,86 @@ class MainWindow(QMainWindow):
             if isinstance(event, threading.Event):
                 event.set()
 
+    def _confirm_dependency_install_on_ui_thread(
+        self,
+        package: str,
+        response: object,
+    ) -> None:
+        if not isinstance(response, dict):
+            return
+        try:
+            response["confirmed"] = self._confirm_dependency_install_direct(package)
+        except Exception as exc:
+            response["error"] = str(exc)
+            self._log_sig.emit(
+                f"Installazione dipendenza: richiesta di conferma non riuscita: {exc}"
+            )
+        finally:
+            event = response.get("event")
+            if isinstance(event, threading.Event):
+                event.set()
+
+    def _confirm_dependency_install_direct(self, package: str) -> bool:
+        answer = QMessageBox.question(
+            self,
+            "Dipendenza mancante",
+            f"Sembra che manchi il pacchetto {package}. "
+            "Desideri che lo installi ora?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return answer == QMessageBox.StandardButton.Yes
+
     def _navigate_browser_address(self) -> None:
         try:
             self._open_url_in_webview(self._browser_address.text())
         except (TypeError, ValueError) as exc:
             self._browser_status.setText(f"Invalid URL: {exc}")
             self._log_sig.emit(f"Browser: URL rifiutato: {exc}")
+
+    def _open_current_browser_externally(self) -> bool:
+        try:
+            current_url = self._browser_view.url().toString()
+            normalized_url = normalize_http_url(current_url)
+            print(
+                f"[Browser] Apertura esterna richiesta: {normalized_url}",
+                flush=True,
+            )
+            self._log_sig.emit(
+                f"Browser esterno: apertura richiesta per {normalized_url}"
+            )
+            opened = webbrowser.open(normalized_url, new=2)
+            if not opened:
+                opened = QDesktopServices.openUrl(QUrl(normalized_url))
+                print(
+                    f"[Browser] Esito fallback QDesktopServices: "
+                    f"{opened!r} ({normalized_url})",
+                    flush=True,
+                )
+        except Exception as exc:
+            message = (
+                "Browser esterno: apertura non riuscita: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            self._browser_status.setText(message)
+            self._log_sig.emit(message)
+            return False
+
+        print(
+            f"[Browser] Esito apertura esterna: {opened!r} ({normalized_url})",
+            flush=True,
+        )
+        if not opened:
+            message = (
+                "Browser esterno: webbrowser e il servizio desktop "
+                "non sono riusciti ad aprire l'URL corrente."
+            )
+            self._browser_status.setText(message)
+            self._log_sig.emit(message)
+            return False
+
+        self._browser_status.setText("URL aperto nel browser esterno.")
+        return True
 
     def _open_url_in_webview(self, url: str) -> None:
         normalized_url = normalize_http_url(url)
@@ -4557,6 +5008,12 @@ class MainWindow(QMainWindow):
             self._page_reader.stop()
         except Exception as exc:
             self._log_sig.emit(f"Screen reader: arresto alla chiusura non riuscito: {exc}")
+        try:
+            self._browser_automation.close()
+        except Exception as exc:
+            self._log_sig.emit(
+                f"Chrome: arresto alla chiusura non riuscito: {type(exc).__name__}: {exc}"
+            )
         super().closeEvent(event)
 
     def _expand_gev_navigation_panels(self) -> None:
@@ -4589,6 +5046,19 @@ class MainWindow(QMainWindow):
         })()"""
         self._gev_page.runJavaScript(script, self._on_gev_panels_expanded)
 
+    def _set_gev_chat_visible(
+        self, visible: bool, splitter: QSplitter, toggle: QPushButton
+    ) -> None:
+        panel = self._gev_jarvis_chat
+        panel.setVisible(visible)
+        if visible:
+            width = max(splitter.width(), 640)
+            chat_width = min(360, max(280, width // 3))
+            splitter.setSizes([width - chat_width, chat_width])
+            panel._input.setFocus()
+        else:
+            splitter.setSizes([max(splitter.width(), 1), 0])
+
     def _on_gev_panels_expanded(self, result) -> None:
         expected_open = {"data-panel", "pp-toggles", "global-context-panel"}
         expected_available = {"location-bar", "control-panel"}
@@ -4620,13 +5090,13 @@ class MainWindow(QMainWindow):
 
     def _on_gev_load_finished(self, succeeded: bool) -> None:
         if succeeded:
-            self._gev_stack.setCurrentWidget(self._gev_view)
             self._log_sig.emit("GEV: pagina caricata; attendo il segnale ready")
             return
         self._gev_load_started = False
         self._gev_ready_evt.clear()
-        self._gev_placeholder.setText("GEV NON DISPONIBILE — controllare il server")
-        self._gev_stack.setCurrentWidget(self._gev_placeholder)
+        self._gev_placeholder_label.setText(
+            "GEV NON DISPONIBILE — controllare il server"
+        )
         self._log_sig.emit(f"GEV: caricamento fallito da {_gev_url()}")
 
     def _on_gev_message(self, message: dict) -> None:
@@ -4681,6 +5151,7 @@ class MainWindow(QMainWindow):
             self.load_gev()
             return
         if action == "open_tab":
+            self.load_gev()
             self.show_gev_tab()
             return
         if action == "hide_tab":
@@ -4691,6 +5162,19 @@ class MainWindow(QMainWindow):
                 f"GEV: UI non pronta, azione '{action}' non inviata"
             )
             return
+        if action in {
+            "camera_fly",
+            "camera_zoom",
+            "camera_tilt",
+            "camera_rotate",
+            "layer",
+            "track",
+            "map",
+            "annotate",
+            "historical_play",
+            "historical_stop",
+        }:
+            self._gev_view_stack.setCurrentWidget(self._gev_view)
 
         if action == "historical_map":
             historical_message = {
@@ -5272,6 +5756,17 @@ class MainWindow(QMainWindow):
         self._drawer_btn.setCheckable(True)
         self._drawer_btn.clicked.connect(self._toggle_drawer)
         lay.addWidget(self._drawer_btn)
+        self._connections_btn = QPushButton("INTEGRAZIONI")
+        self._connections_btn.setToolTip("Plugins & Connections")
+        self._connections_btn.setFont(QFont("Courier New", 8, QFont.Weight.Bold))
+        self._connections_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._connections_btn.setStyleSheet(
+            f"QPushButton {{ color: {C.PRI}; background: transparent; "
+            f"border: 1px solid {C.BORDER}; padding: 5px 8px; }}"
+            f"QPushButton:hover {{ border-color: {C.PRI}; }}"
+        )
+        self._connections_btn.clicked.connect(self._show_connections_dialog)
+        lay.addWidget(self._connections_btn)
         lay.addStretch()
 
         mid = QVBoxLayout(); mid.setSpacing(1)
@@ -5318,6 +5813,840 @@ class MainWindow(QMainWindow):
         right_col.addWidget(self._date_lbl)
         lay.addLayout(right_col)
         return w
+
+    def _show_connections_dialog(self) -> None:
+        if not callable(self.get_connectors):
+            QMessageBox.warning(
+                self,
+                "Integrazioni",
+                "Il registro delle connessioni non è disponibile.",
+            )
+            return
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Plugins & Connections")
+        dialog.resize(680, 560)
+        dialog.setStyleSheet(f"""
+            QDialog, QWidget {{
+                background: {C.BG};
+                color: {C.TEXT};
+            }}
+            QFrame {{
+                background: {C.PANEL};
+                border: 1px solid {C.BORDER};
+                border-radius: 4px;
+            }}
+            QLabel {{ color: {C.TEXT_MED}; background: transparent; }}
+            QCheckBox {{ color: {C.TEXT}; background: transparent; spacing: 6px; }}
+            QCheckBox::indicator {{
+                width: 14px; height: 14px;
+                border: 1px solid {C.PRI_DIM};
+                background: {C.DARK};
+            }}
+            QCheckBox::indicator:checked {{
+                background: {C.PRI};
+                border-color: {C.PRI};
+            }}
+            QPushButton {{
+                color: {C.TEXT};
+                background: {C.PANEL2};
+                border: 1px solid {C.PRI_DIM};
+                padding: 6px 12px;
+            }}
+            QPushButton:hover {{ color: {C.PRI}; border-color: {C.PRI}; }}
+            QPushButton:disabled {{ color: {C.TEXT_DIM}; border-color: {C.BORDER}; }}
+            QScrollArea {{ background: {C.BG}; border: 0; }}
+        """)
+        layout = QVBoxLayout(dialog)
+        intro = QLabel(
+            "I connettori richiedono credenziali OAuth e un endpoint del servizio. "
+            "I token vengono salvati cifrati con DPAPI su Windows."
+        )
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+        scroll = QScrollArea(dialog)
+        scroll.setWidgetResizable(True)
+        content = QWidget(scroll)
+        cards = QVBoxLayout(content)
+        cards.setContentsMargins(4, 4, 4, 4)
+        cards.setSpacing(8)
+        scroll.setWidget(content)
+        layout.addWidget(scroll, stretch=1)
+        status_labels: dict[str, QLabel] = {}
+        connector_statuses: dict[str, str] = {}
+        scope_checks: dict[str, list[QCheckBox]] = {}
+        connect_buttons: dict[str, QPushButton] = {}
+        configure_buttons: dict[str, QPushButton] = {}
+        connector_items: dict[str, dict] = {}
+        revoke_buttons: dict[str, QPushButton] = {}
+        public_apis_status_label: QLabel | None = None
+        public_apis_activate_button: QPushButton | None = None
+        public_apis_search_input: QLineEdit | None = None
+        public_apis_search_button: QPushButton | None = None
+        public_apis_results: QPlainTextEdit | None = None
+        public_apis_worker: _PublicApisQueryThread | None = None
+        notified_oauth_errors: set[tuple[str, str]] = set()
+
+        def refresh() -> None:
+            nonlocal public_apis_worker
+            try:
+                connectors = self.get_connectors()
+            except Exception as exc:
+                QMessageBox.warning(
+                    dialog,
+                    "Integrazioni",
+                    f"Impossibile leggere le connessioni: {type(exc).__name__}: {exc}",
+                )
+                return
+            by_id = {item["id"]: item for item in connectors}
+            get_catalog_status = getattr(self, "get_public_apis_status", None)
+            if callable(get_catalog_status) and public_apis_status_label:
+                try:
+                    catalog = get_catalog_status()
+                    public_apis_status_label.setText(catalog["message"])
+                    active = catalog["status"] == "active"
+                    starting = catalog["status"] == "starting"
+                    public_apis_activate_button.setEnabled(
+                        not active and not starting
+                    )
+                    public_apis_activate_button.setText(
+                        "Catalogo attivo"
+                        if active
+                        else "Avvio in corso…"
+                        if starting
+                        else "Attiva Catalogo"
+                    )
+                    public_apis_search_input.setVisible(active)
+                    public_apis_search_button.setVisible(active)
+                    public_apis_results.setVisible(active)
+                except Exception as exc:
+                    public_apis_status_label.setText(
+                        f"Stato catalogo non disponibile: {type(exc).__name__}."
+                    )
+            if public_apis_worker is not None and not public_apis_worker.isRunning():
+                if public_apis_results is not None:
+                    public_apis_results.setPlainText(
+                        public_apis_worker.error or public_apis_worker.result
+                    )
+                if public_apis_search_button is not None:
+                    public_apis_search_button.setEnabled(True)
+                public_apis_worker = None
+            for connector_id, item in by_id.items():
+                if connector_id in connector_items:
+                    connector_items[connector_id].update(item)
+                connector_statuses[connector_id] = item["status"]
+                checks = scope_checks.get(connector_id, [])
+                granted_scopes = set(item["scopes_granted"])
+                for check in checks:
+                    check.blockSignals(True)
+                    check.setChecked(check.text() in granted_scopes)
+                    check.blockSignals(False)
+                label = status_labels.get(connector_id)
+                if label is not None:
+                    oauth_pending = item.get("oauth_pending", False)
+                    displayed_status = (
+                        "In attesa di autorizzazione…"
+                        if oauth_pending
+                        else item["status"]
+                    )
+                    details = (
+                        f"Stato: {displayed_status}  ·  "
+                        f"Permessi: {', '.join(item['scopes_granted']) or 'nessuno'}"
+                    )
+                    oauth_error = item.get("oauth_error", "")
+                    if oauth_error:
+                        details += f"  ·  Errore OAuth: {oauth_error}"
+                        label.setStyleSheet("color: #ff5c68;")
+                        error_key = (connector_id, oauth_error)
+                        if error_key not in notified_oauth_errors:
+                            notified_oauth_errors.add(error_key)
+                            QMessageBox.warning(
+                                dialog,
+                                "Connessione OAuth",
+                                f"{item['name']}: {oauth_error}",
+                            )
+                    elif item["status"] == "connected":
+                        label.setStyleSheet("color: #35d07f;")
+                    elif oauth_pending:
+                        label.setStyleSheet("color: #f0b84b;")
+                    else:
+                        label.setStyleSheet("")
+                    if item["oauth_setup"] and item["status"] != "connected":
+                        details += "  ·  Credenziali OAuth mancanti: usa Configura ora"
+                    if (
+                        connector_id == "google-workspace"
+                        and item["status"] != "connected"
+                        and not is_google_client_id_valid(item.get("oauth_client_id"))
+                    ):
+                        details += f"  ·  {GOOGLE_CLIENT_ID_ERROR}"
+                    if not item["transport_configured"]:
+                        details += (
+                            "  ·  Endpoint MCP non configurato: l'autorizzazione OAuth "
+                            "non abilita gli strumenti Google Workspace."
+                            if connector_id == "google-workspace"
+                            else "  ·  Endpoint MCP non configurato"
+                        )
+                    if item.get("oauth_dynamic_registration"):
+                        details += "  ·  Client OAuth registrato automaticamente all'avvio PKCE"
+                    label.setText(details)
+                connect_button = connect_buttons.get(connector_id)
+                if connect_button is not None:
+                    if item.get("oauth_pending") and item["status"] != "connected":
+                        connect_button.setText("In attesa…")
+                        connect_button.setEnabled(False)
+                    elif item["status"] == "connected":
+                        connect_button.setText("Autorizza permessi")
+                        connect_button.setEnabled(True)
+                    else:
+                        connect_button.setText("Connetti")
+                        connect_button.setEnabled(
+                            connector_id != "google-workspace"
+                            or item["oauth_configured"]
+                        )
+                configure_button = configure_buttons.get(connector_id)
+                if configure_button is not None:
+                    configure_button.setVisible(
+                        bool(item.get("oauth_setup") or item.get("oauth_setup_url"))
+                        or connector_id == "google-workspace"
+                    )
+                revoke = revoke_buttons.get(connector_id)
+                if revoke is not None:
+                    revoke.setEnabled(item["status"] == "connected")
+
+        try:
+            initial = self.get_connectors()
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Integrazioni",
+                f"Impossibile leggere le connessioni: {type(exc).__name__}: {exc}",
+            )
+            return
+
+        public_apis_card = QFrame(content)
+        public_apis_card.setFrameShape(QFrame.Shape.StyledPanel)
+        public_apis_layout = QVBoxLayout(public_apis_card)
+        public_apis_title = QLabel("Public APIs")
+        public_apis_title.setStyleSheet(f"color: {C.PRI}; font-weight: bold;")
+        public_apis_layout.addWidget(public_apis_title)
+        public_apis_status_label = QLabel(
+            "Catalogo di API pubbliche e gratuite, indicizzato dal server MCP."
+        )
+        public_apis_status_label.setWordWrap(True)
+        public_apis_layout.addWidget(public_apis_status_label)
+        public_apis_activate_button = QPushButton("Attiva Catalogo")
+        public_apis_layout.addWidget(
+            public_apis_activate_button, 0, Qt.AlignmentFlag.AlignLeft
+        )
+        public_apis_search_row = QHBoxLayout()
+        public_apis_search_input = QLineEdit()
+        public_apis_search_input.setPlaceholderText(
+            "Cerca per parola chiave o categoria (es. meteo, finanza)"
+        )
+        public_apis_search_button = QPushButton("Cerca")
+        public_apis_search_row.addWidget(public_apis_search_input, stretch=1)
+        public_apis_search_row.addWidget(public_apis_search_button)
+        public_apis_layout.addLayout(public_apis_search_row)
+        public_apis_results = QPlainTextEdit()
+        public_apis_results.setReadOnly(True)
+        public_apis_results.setPlaceholderText("I risultati del catalogo appariranno qui.")
+        public_apis_results.setMaximumHeight(150)
+        public_apis_layout.addWidget(public_apis_results)
+        public_apis_search_input.setVisible(False)
+        public_apis_search_button.setVisible(False)
+        public_apis_results.setVisible(False)
+        get_catalog_status = getattr(self, "get_public_apis_status", None)
+        if callable(get_catalog_status):
+            try:
+                catalog = get_catalog_status()
+                public_apis_status_label.setText(catalog["message"])
+                public_apis_search_input.setVisible(catalog["status"] == "active")
+                public_apis_search_button.setVisible(catalog["status"] == "active")
+                public_apis_results.setVisible(catalog["status"] == "active")
+            except Exception as exc:
+                public_apis_status_label.setText(
+                    f"Stato catalogo non disponibile: {type(exc).__name__}."
+                )
+        cards.addWidget(public_apis_card)
+
+        def activate_public_apis() -> None:
+            activate_catalog = getattr(self, "activate_public_apis", None)
+            if not callable(activate_catalog):
+                public_apis_status_label.setText(
+                    "L'attivazione del catalogo non è collegata al runtime."
+                )
+                return
+            try:
+                result = activate_catalog()
+                public_apis_status_label.setText(result["message"])
+                public_apis_activate_button.setEnabled(False)
+                refresh()
+            except Exception as exc:
+                public_apis_status_label.setText(
+                    f"Attivazione non riuscita: {type(exc).__name__}: {exc}"
+                )
+
+        def search_public_apis() -> None:
+            nonlocal public_apis_worker
+            query = public_apis_search_input.text().strip()
+            if not query:
+                QMessageBox.information(
+                    dialog, "Public APIs", "Inserisci una parola chiave o una categoria."
+                )
+                return
+            query_catalog = getattr(self, "query_public_apis", None)
+            if not callable(query_catalog):
+                public_apis_results.setPlainText(
+                    "La ricerca del catalogo non è collegata al runtime."
+                )
+                return
+            public_apis_search_button.setEnabled(False)
+            public_apis_results.setPlainText("Ricerca nel catalogo in corso…")
+            public_apis_worker = _PublicApisQueryThread(
+                query, query_catalog
+            )
+            self._public_apis_workers.add(public_apis_worker)
+            public_apis_worker.finished.connect(
+                lambda worker=public_apis_worker:
+                self._public_apis_workers.discard(worker)
+            )
+            public_apis_worker.start()
+
+        public_apis_activate_button.clicked.connect(activate_public_apis)
+        public_apis_search_button.clicked.connect(search_public_apis)
+        public_apis_search_input.returnPressed.connect(search_public_apis)
+
+        for item in initial:
+            if item["id"] == "public-apis":
+                continue
+            connector_items[item["id"]] = item
+            card = QFrame(content)
+            card.setFrameShape(QFrame.Shape.StyledPanel)
+            card_layout = QVBoxLayout(card)
+            title = QLabel(f"{item['name']}  ·  {item['type']}")
+            title.setStyleSheet(f"color: {C.PRI}; font-weight: bold;")
+            card_layout.addWidget(title)
+            if item["id"] == "google-workspace":
+                scope_note = QLabel(
+                    "OAuth richiede solo lettura Gmail e accesso Calendar. "
+                    "Invio Gmail e accesso Drive non sono autorizzati da questo flusso."
+                )
+                scope_note.setWordWrap(True)
+                card_layout.addWidget(scope_note)
+            initial_pending = item.get("oauth_pending", False)
+            initial_status = (
+                "In attesa di autorizzazione…"
+                if initial_pending
+                else item["status"]
+            )
+            details = (
+                f"Stato: {initial_status}  ·  "
+                f"Permessi: {', '.join(item['scopes_granted']) or 'nessuno'}"
+            )
+            if (
+                item["oauth_setup"]
+                and item["status"] != "connected"
+            ):
+                details += "  ·  Credenziali OAuth mancanti: usa Configura ora"
+            if (
+                item["id"] == "google-workspace"
+                and item["status"] != "connected"
+                and not is_google_client_id_valid(item.get("oauth_client_id"))
+            ):
+                details += f"  ·  {GOOGLE_CLIENT_ID_ERROR}"
+            if not item["transport_configured"]:
+                details += (
+                    "  ·  Endpoint MCP non configurato: l'autorizzazione OAuth "
+                    "non abilita gli strumenti Google Workspace."
+                    if item["id"] == "google-workspace"
+                    else "  ·  Endpoint MCP non configurato"
+                )
+            if item.get("oauth_dynamic_registration"):
+                details += "  ·  Client OAuth registrato automaticamente all'avvio PKCE"
+            state = QLabel(details)
+            state.setWordWrap(True)
+            if initial_pending:
+                state.setStyleSheet("color: #f0b84b;")
+            elif item["status"] == "connected":
+                state.setStyleSheet("color: #35d07f;")
+            status_labels[item["id"]] = state
+            connector_statuses[item["id"]] = item["status"]
+            card_layout.addWidget(state)
+            checks: list[QCheckBox] = []
+            scope_row = QHBoxLayout()
+            scope_hint = QLabel("Permessi da concedere a Jarvis (scegline almeno uno):")
+            scope_row.addWidget(scope_hint)
+            for scope in item["scopes_declared"]:
+                check = QCheckBox(scope)
+                check.setChecked(scope in item["scopes_granted"])
+                checks.append(check)
+                scope_row.addWidget(check)
+            scope_row.addStretch()
+            scope_checks[item["id"]] = checks
+            card_layout.addLayout(scope_row)
+
+            def save_selected_scopes(
+                _state=None,
+                connector_id=item["id"],
+                connector_checks=checks,
+            ) -> None:
+                callback = getattr(self, "set_connector_scopes", None)
+                if not callable(callback):
+                    return
+                selected_scopes = [
+                    check.text() for check in connector_checks if check.isChecked()
+                ]
+                try:
+                    callback(connector_id, selected_scopes)
+                except Exception as exc:
+                    QMessageBox.warning(
+                        dialog,
+                        "Permessi",
+                        f"Impossibile salvare i permessi: {type(exc).__name__}: {exc}",
+                    )
+
+            for check in checks:
+                check.stateChanged.connect(save_selected_scopes)
+
+            actions = QHBoxLayout()
+            connect = QPushButton(
+                "In attesa…"
+                if initial_pending and item["status"] != "connected"
+                else "Autorizza permessi"
+                if item["status"] == "connected"
+                else "Connetti"
+            )
+            connect.setEnabled(
+                item["status"] == "connected"
+                or (
+                    not initial_pending
+                    and (
+                        item["id"] != "google-workspace"
+                        or item["oauth_configured"]
+                    )
+                )
+            )
+            if item["id"] == "google-workspace" and not item["transport_configured"]:
+                connect.setToolTip(
+                    "L'autorizzazione OAuth non configura un endpoint MCP per "
+                    "gli strumenti Google Workspace."
+                )
+            elif not item["transport_configured"]:
+                connect.setToolTip(
+                    "Clicca per vedere cosa manca: endpoint MCP non configurato."
+                )
+            elif not item["oauth_configured"]:
+                connect.setToolTip(
+                    "Clicca per configurare il provider OAuth."
+                )
+            else:
+                connect.setToolTip(
+                    "Seleziona almeno un permesso per Jarvis, poi avvia OAuth nel browser."
+                )
+            connect_buttons[item["id"]] = connect
+            manual_token = None
+            if item["id"] == "github":
+                manual_token = QPushButton("Usa Token Manuale")
+                manual_token.setToolTip(
+                    "Salva un Personal Access Token GitHub senza aprire il browser."
+                )
+                manual_token.clicked.connect(
+                    lambda _checked=False, connector=item:
+                    self._configure_github_pat(connector) and refresh()
+                )
+            configure = None
+            if (
+                not item.get("oauth_dynamic_registration", False)
+                and (
+                    item.get("auth") == "oauth2"
+                    or item.get("oauth_setup")
+                    or item.get("oauth_setup_url")
+                )
+            ):
+                configure = QPushButton("Configura ora")
+                configure.setVisible(
+                    bool(item.get("oauth_setup") or item.get("oauth_setup_url"))
+                    or item["id"] == "google-workspace"
+                )
+                configure.clicked.connect(
+                    lambda _checked=False, connector=item:
+                    self._configure_connector_oauth(connector) and refresh()
+                )
+                configure_buttons[item["id"]] = configure
+            revoke = QPushButton("Disconnetti")
+            revoke.setEnabled(True)
+            if item["status"] != "connected":
+                revoke.setToolTip("Il servizio non è attualmente connesso.")
+            revoke_buttons[item["id"]] = revoke
+
+            def connect_service(
+                _checked=False,
+                connector=item,
+                status_label=state,
+            ):
+                selected = [
+                    check.text()
+                    for check in scope_checks[connector["id"]]
+                    if check.isChecked()
+                ]
+                if not selected:
+                    QMessageBox.information(
+                        dialog, "Permessi", "Seleziona almeno un permesso."
+                    )
+                    return
+                if (
+                    connector_statuses.get(connector["id"]) != "connected"
+                    and not connector["transport_configured"]
+                    and connector["id"] != "google-workspace"
+                ):
+                    QMessageBox.information(
+                        dialog,
+                        "Connettore non configurato",
+                        f"{connector['name']} non può ancora collegarsi: manca "
+                        "l'endpoint MCP del servizio.",
+                    )
+                    return
+                if (
+                    connector_statuses.get(connector["id"]) != "connected"
+                    and not connector["oauth_configured"]
+                ):
+                    if not self._prompt_connector_oauth_setup(connector, dialog):
+                        return
+                    updated = next(
+                        (
+                            current
+                            for current in self.get_connectors()
+                            if current["id"] == connector["id"]
+                        ),
+                        None,
+                    )
+                    if updated is None or not updated["oauth_configured"]:
+                        QMessageBox.warning(
+                            dialog,
+                            "Configurazione OAuth",
+                            "Le credenziali non risultano complete. Verifica i "
+                            "dati e riprova.",
+                        )
+                        return
+                    connector.update(updated)
+                    refresh()
+                try:
+                    if connector_statuses.get(connector["id"]) == "connected":
+                        save_callback = getattr(self, "set_connector_scopes", None)
+                        if callable(save_callback):
+                            save_callback(connector["id"], selected)
+                        else:
+                            self.grant_connector_scopes(connector["id"], selected)
+                        refresh()
+                        return
+                    auth_url = self.begin_connector_oauth(connector["id"])
+                    parsed_url = QUrl(auth_url)
+                    if not parsed_url.isValid() or parsed_url.scheme() != "https":
+                        raise RuntimeError("Il provider ha restituito un URL OAuth non valido.")
+                    opened = webbrowser.open_new_tab(auth_url)
+                    if not opened:
+                        opened = QDesktopServices.openUrl(parsed_url)
+                    if not opened:
+                        raise RuntimeError("Il browser predefinito non si è aperto.")
+                    status_label.setText(
+                        "Stato: autorizzazione OAuth in attesa nel browser…"
+                    )
+                    refresh()
+                except Exception as exc:
+                    QMessageBox.warning(
+                        dialog,
+                        "Connessione OAuth",
+                        f"Connessione non avviata: {type(exc).__name__}: {exc}",
+                    )
+
+            def disconnect_service(_checked=False, connector=item):
+                if connector_statuses.get(connector["id"]) != "connected":
+                    QMessageBox.information(
+                        dialog,
+                        "Disconnessione",
+                        f"{connector['name']} è già disconnesso.",
+                    )
+                    return
+                try:
+                    self.revoke_connector(connector["id"])
+                    refresh()
+                    QMessageBox.information(
+                        dialog,
+                        "Disconnessione",
+                        f"{connector['name']} è stato disconnesso da Jarvis.",
+                    )
+                except Exception as exc:
+                    QMessageBox.warning(
+                        dialog,
+                        "Disconnessione",
+                        f"Disconnessione non riuscita: {type(exc).__name__}: {exc}",
+                    )
+
+            connect.clicked.connect(connect_service)
+            revoke.clicked.connect(disconnect_service)
+            actions.addWidget(connect)
+            if manual_token is not None:
+                actions.addWidget(manual_token)
+            if configure is not None:
+                actions.addWidget(configure)
+            actions.addWidget(revoke)
+            actions.addStretch()
+            card_layout.addLayout(actions)
+            cards.addWidget(card)
+
+        cards.addStretch()
+        refresh_timer = QTimer(dialog)
+        refresh_timer.timeout.connect(refresh)
+        refresh_timer.start(1000)
+        dialog.finished.connect(refresh_timer.stop)
+        dialog.exec()
+
+    def _configure_connector_oauth(self, connector: dict) -> bool:
+        if not callable(self.save_connector_oauth_credentials):
+            QMessageBox.warning(
+                self,
+                "Configurazione OAuth",
+                "Il salvataggio sicuro delle credenziali non è disponibile.",
+            )
+            return False
+
+        if connector.get("oauth_dynamic_registration"):
+            return True
+        setup = QDialog(self)
+        setup.setWindowTitle(f"Configura OAuth — {connector['name']}")
+        setup.setMinimumWidth(440)
+        layout = QVBoxLayout(setup)
+
+        explanation = QLabel(
+            f"Crea o apri l'app OAuth di {html.escape(connector['name'])}, "
+            "poi inserisci il Client ID e i dati richiesti dal provider. Le "
+            "credenziali vengono salvate in .env locale e nel vault cifrato."
+        )
+        explanation.setWordWrap(True)
+        layout.addWidget(explanation)
+
+        setup_url = connector.get("oauth_setup_url", "")
+        if setup_url:
+            link = QLabel(
+                f'<a href="{html.escape(setup_url, quote=True)}">'
+                "Apri la pagina per creare l'app OAuth</a>"
+            )
+            link.setOpenExternalLinks(True)
+            layout.addWidget(link)
+        if connector["id"] == "github":
+            instruction = QLabel(
+                "Su GitHub copia il Client ID e genera un nuovo Client Secret."
+            )
+        elif connector["id"] == "spotify":
+            instruction = QLabel(
+                "Spotify usa PKCE: è sufficiente il Client ID, non serve un Client Secret."
+            )
+        else:
+            instruction = QLabel("Copia il Client ID e il Client Secret dell'app.")
+        instruction.setWordWrap(True)
+        layout.addWidget(instruction)
+
+        form = QFormLayout()
+        client_id = QLineEdit(str(connector.get("oauth_client_id", "")))
+        client_id.setPlaceholderText("Client ID")
+        form.addRow("Client ID", client_id)
+        client_secret = QLineEdit()
+        if connector.get("oauth_requires_client_secret", True):
+            client_secret.setPlaceholderText("Client Secret")
+            client_secret.setEchoMode(QLineEdit.EchoMode.Password)
+            form.addRow("Client Secret", client_secret)
+        redirect_uri = connector.get("oauth_redirect_uri", "")
+        if redirect_uri:
+            redirect_field = QLineEdit(redirect_uri)
+            redirect_field.setReadOnly(True)
+            redirect_field.setToolTip(
+                "Copia questo URI nel campo Authorization callback URL del provider."
+            )
+            form.addRow("URI di reindirizzamento", redirect_field)
+        layout.addLayout(form)
+
+        test_button = None
+        test_status = None
+        if connector["id"] == "github":
+            test_row = QHBoxLayout()
+            test_button = QPushButton("Verifica Connessione")
+            test_status = QLabel("")
+            test_status.setWordWrap(True)
+            test_row.addWidget(test_button)
+            test_row.addWidget(test_status, stretch=1)
+            layout.addLayout(test_row)
+
+            def test_github_connection() -> None:
+                callback = getattr(self, "test_connector_oauth", None)
+                if not callable(callback):
+                    test_status.setStyleSheet("color: #ff5c68;")
+                    test_status.setText("Verifica connessione non disponibile.")
+                    return
+                workers = getattr(self, "_oauth_test_workers", None)
+                if workers is None:
+                    workers = set()
+                    self._oauth_test_workers = workers
+                worker = _OAuthCredentialTestThread(
+                    callback,
+                    connector["id"],
+                    client_id.text(),
+                    client_secret.text(),
+                    self,
+                )
+                workers.add(worker)
+
+                def show_test_result(success: bool, message: str) -> None:
+                    test_status.setStyleSheet(
+                        "color: #35d07f;" if success else "color: #ff5c68;"
+                    )
+                    test_status.setText(message)
+                    test_button.setEnabled(True)
+
+                worker.completed.connect(show_test_result)
+                worker.finished.connect(
+                    lambda current=worker, active_workers=workers:
+                    active_workers.discard(current)
+                )
+                test_button.setEnabled(False)
+                test_status.setStyleSheet(f"color: {C.TEXT_MED};")
+                test_status.setText("Verifica raggiungibilità GitHub…")
+                worker.start()
+
+            test_button.clicked.connect(test_github_connection)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Save
+            | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.button(QDialogButtonBox.StandardButton.Save).setText("Salva")
+        buttons.accepted.connect(setup.accept)
+        buttons.rejected.connect(setup.reject)
+        layout.addWidget(buttons)
+        if setup.exec() != QDialog.DialogCode.Accepted:
+            return False
+
+        try:
+            self.save_connector_oauth_credentials(
+                connector["id"], client_id.text(), client_secret.text()
+            )
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Configurazione OAuth",
+                f"Credenziali non salvate: {type(exc).__name__}: {exc}",
+            )
+            return False
+        finally:
+            client_secret.clear()
+        return True
+
+    def _configure_github_pat(self, connector: dict) -> bool:
+        if not callable(self.save_connector_token):
+            QMessageBox.warning(
+                self,
+                "Token GitHub",
+                "Il salvataggio sicuro dei token non è disponibile.",
+            )
+            return False
+
+        setup = QDialog(self)
+        setup.setWindowTitle("Usa Token Manuale — GitHub")
+        setup.setMinimumWidth(440)
+        layout = QVBoxLayout(setup)
+        explanation = QLabel(
+            "Inserisci un Personal Access Token Classic. Jarvis lo salva nel "
+            "vault cifrato locale e non apre il browser."
+        )
+        explanation.setWordWrap(True)
+        layout.addWidget(explanation)
+        link = QLabel(
+            '<a href="https://github.com/settings/tokens/new?scopes=repo%2Cread%3Aorg">'
+            "Genera un token GitHub (Classic)</a>"
+        )
+        link.setOpenExternalLinks(True)
+        layout.addWidget(link)
+        scopes = QLabel(
+            "Seleziona gli scope repo e read:org durante la creazione."
+        )
+        scopes.setWordWrap(True)
+        layout.addWidget(scopes)
+        token_field = QLineEdit()
+        token_field.setPlaceholderText("ghp_…")
+        token_field.setEchoMode(QLineEdit.EchoMode.Password)
+        layout.addWidget(token_field)
+        save_status = QLabel("Il token verrà salvato automaticamente dopo l'incolla.")
+        save_status.setWordWrap(True)
+        layout.addWidget(save_status)
+        save_timer = QTimer(setup)
+        save_timer.setSingleShot(True)
+        save_timer.setInterval(400)
+        saved_token = ""
+
+        def save_token_automatically() -> None:
+            nonlocal saved_token
+            token = token_field.text().strip()
+            if not token or token == saved_token:
+                return
+            save_status.setStyleSheet("color: #f0b84b;")
+            save_status.setText("Salvataggio sicuro del token…")
+            try:
+                self.save_connector_token(connector["id"], token)
+            except Exception as exc:
+                save_status.setStyleSheet("color: #ff5c68;")
+                save_status.setText(
+                    f"Token non salvato: {type(exc).__name__}: {exc}"
+                )
+                return
+            saved_token = token
+            save_status.setStyleSheet("color: #35d07f;")
+            save_status.setText(
+                "Token salvato nel vault cifrato. GitHub è connesso in Jarvis."
+            )
+
+        def queue_token_save(_text: str) -> None:
+            if token_field.text().strip() != saved_token:
+                save_status.setStyleSheet(f"color: {C.TEXT_MED};")
+                save_status.setText("Salvataggio automatico in corso…")
+                save_timer.start()
+
+        token_field.textChanged.connect(queue_token_save)
+        save_timer.timeout.connect(save_token_automatically)
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Chiudi")
+
+        def close_token_dialog() -> None:
+            save_timer.stop()
+            save_token_automatically()
+            setup.accept()
+
+        buttons.accepted.connect(close_token_dialog)
+        buttons.rejected.connect(setup.reject)
+        layout.addWidget(buttons)
+        setup.exec()
+        save_timer.stop()
+        token_field.clear()
+        return bool(saved_token)
+
+    def _prompt_connector_oauth_setup(
+        self, connector: dict, parent: QWidget
+    ) -> bool:
+        message = QMessageBox(parent)
+        message.setIcon(QMessageBox.Icon.Information)
+        message.setWindowTitle("Configurazione OAuth mancante")
+        message.setText(
+            f"Per connettere {connector['name']} servono le credenziali OAuth."
+        )
+        configure = message.addButton(
+            "Configura ora", QMessageBox.ButtonRole.AcceptRole
+        )
+        message.addButton(QMessageBox.StandardButton.Cancel)
+        message.exec()
+        if message.clickedButton() is not configure:
+            return False
+        return self._configure_connector_oauth(connector)
 
     def _apply_theme(self) -> None:
         theme_path = Path(__file__).resolve().parent / "core" / "jarvis_theme.qss"
@@ -5481,6 +6810,7 @@ class MainWindow(QMainWindow):
     def _system_action(self, action: str) -> None:
         """Dispatch an action from the HUD SISTEMA tab (runs on the Qt thread)."""
         dispatch = {
+            "connections": "_show_connections_dialog",
             "fullscreen": "_toggle_fullscreen",
             "desktop_shortcut": "_create_desktop_shortcut",
             "autostart": "_toggle_autostart",
@@ -5972,7 +7302,7 @@ class MainWindow(QMainWindow):
             self._customize_overlay.hide()
         cw = self.centralWidget()
         ov = CustomizeOverlay(
-            cfg.get("assistant_name", "JARVIS") or "JARVIS",
+            cfg.get("assistant_name", "IRIS") or "IRIS",
             cfg.get("user_name", ""),
             cfg.get("ui_color", "") or DEFAULT_UI_COLOR,
             cfg.get("voice_name", ""),
@@ -6035,7 +7365,7 @@ class MainWindow(QMainWindow):
                            full_duplex_enabled: bool | None = None,
                            page_reader_speed: float | None = None):
         """Update all name/theme-dependent UI elements and persist to config."""
-        self._assistant_name = name.strip() or "JARVIS"
+        self._assistant_name = name.strip() or "IRIS"
         display = self._assistant_name.upper()
         self.setWindowTitle("JARVIS VII · IRIS")
         self._title_lbl.setText(display)
@@ -6194,28 +7524,31 @@ class MainWindow(QMainWindow):
 
     # ── Irreversible-action confirmation ─────────────────────────────────────
 
-    def _show_confirm_banner(self, title: str, detail: str):
+    def _show_confirm_banner(self, key: str, title: str, detail: str):
+        from core.confirm import is_current
+        if not is_current(key):
+            return
         self._hide_confirm_banner()
         ov = ConfirmBanner(title, detail, parent=self.centralWidget())
-        ov.answered.connect(self._on_confirm_answered)
+        ov.answered.connect(lambda accepted: self._on_confirm_answered(key, accepted))
         self._centre_overlay(ov)
         self._confirm_overlay = ov
+        self._confirm_overlay_key = key
 
-    def _hide_confirm_banner(self):
+    def _hide_confirm_banner(self, key: str | None = None):
+        if key is not None and key != getattr(self, "_confirm_overlay_key", None):
+            return
         ov = getattr(self, "_confirm_overlay", None)
         if ov is not None:
             ov.hide()
             ov.deleteLater()
             self._confirm_overlay = None
+            self._confirm_overlay_key = None
 
-    def _on_confirm_answered(self, accepted: bool):
-        # Tear the banner down first: core.confirm.resolve() may be about to
-        # shut the machine down, and a live widget mid-callback is not where you
-        # want to be when that happens.
-        self._hide_confirm_banner()
+    def _on_confirm_answered(self, key: str, accepted: bool):
         try:
             from core.confirm import resolve
-            resolve(bool(accepted))
+            resolve(bool(accepted), key=key)
         except Exception as e:
             self._log.append_log(f"ERR: Confirmation failed — {e}")
 
@@ -6390,7 +7723,7 @@ class MainWindow(QMainWindow):
             self._overlay.hide()
             self._overlay = None
         self._apply_state("LISTENING")
-        self._assistant_name = _read_full_config().get("assistant_name", "JARVIS") or "JARVIS"
+        self._assistant_name = _read_full_config().get("assistant_name", "IRIS") or "IRIS"
         self._log.append_log(f"SYS: Initialised. OS={os_name.upper()}. {self._assistant_name} online.")
 
 class _RootShim:
@@ -6498,6 +7831,14 @@ class JarvisUI:
         self._win.on_text_command = cb
 
     @property
+    def browser_automation(self) -> BrowserAutomation:
+        return self._win._browser_automation
+
+    def gev_chat_message(self, role: str, text: str) -> None:
+        """Forward a JARVIS chat event to the GEV panel on the Qt thread."""
+        self._win._gev_chat_message_sig.emit(str(role), str(text))
+
+    @property
     def on_remote_clicked(self):
         return self._win.on_remote_clicked
 
@@ -6529,14 +7870,16 @@ class JarvisUI:
     def on_audio_device_change(self, cb):
         self._win.on_audio_device_change = cb
 
-    def show_confirm(self, title: str, detail: str) -> None:
+    process_voice_keyed_confirmation = True
+
+    def show_confirm(self, key: str, title: str, detail: str) -> None:
         """Thread-safe: raise the irreversible-action gate. Called from action
         handlers running in executor threads, so it goes through a signal."""
-        self._win._confirm_sig.emit(str(title)[:120], str(detail)[:300])
+        self._win._confirm_sig.emit(key, str(title)[:120], str(detail)[:300])
 
-    def hide_confirm(self) -> None:
+    def hide_confirm(self, key: str) -> None:
         """Thread-safe: take the gate down."""
-        self._win._confirm_hide_sig.emit()
+        self._win._confirm_hide_sig.emit(key)
 
     @property
     def get_plugins(self):
@@ -6545,6 +7888,86 @@ class JarvisUI:
     @get_plugins.setter
     def get_plugins(self, cb):
         self._win.get_plugins = cb
+
+    @property
+    def get_connectors(self):
+        return self._win.get_connectors
+
+    @get_connectors.setter
+    def get_connectors(self, cb):
+        self._win.get_connectors = cb
+
+    @property
+    def begin_connector_oauth(self):
+        return self._win.begin_connector_oauth
+
+    @begin_connector_oauth.setter
+    def begin_connector_oauth(self, cb):
+        self._win.begin_connector_oauth = cb
+
+    @property
+    def save_connector_oauth_credentials(self):
+        return self._win.save_connector_oauth_credentials
+
+    @save_connector_oauth_credentials.setter
+    def save_connector_oauth_credentials(self, cb):
+        self._win.save_connector_oauth_credentials = cb
+
+    @property
+    def save_connector_token(self):
+        return self._win.save_connector_token
+
+    @save_connector_token.setter
+    def save_connector_token(self, cb):
+        self._win.save_connector_token = cb
+
+    @property
+    def grant_connector_scopes(self):
+        return self._win.grant_connector_scopes
+
+    @grant_connector_scopes.setter
+    def grant_connector_scopes(self, cb):
+        self._win.grant_connector_scopes = cb
+
+    @property
+    def set_connector_scopes(self):
+        return self._win.set_connector_scopes
+
+    @set_connector_scopes.setter
+    def set_connector_scopes(self, cb):
+        self._win.set_connector_scopes = cb
+
+    @property
+    def revoke_connector(self):
+        return self._win.revoke_connector
+
+    @revoke_connector.setter
+    def revoke_connector(self, cb):
+        self._win.revoke_connector = cb
+
+    @property
+    def get_public_apis_status(self):
+        return self._win.get_public_apis_status
+
+    @get_public_apis_status.setter
+    def get_public_apis_status(self, cb):
+        self._win.get_public_apis_status = cb
+
+    @property
+    def activate_public_apis(self):
+        return self._win.activate_public_apis
+
+    @activate_public_apis.setter
+    def activate_public_apis(self, cb):
+        self._win.activate_public_apis = cb
+
+    @property
+    def query_public_apis(self):
+        return self._win.query_public_apis
+
+    @query_public_apis.setter
+    def query_public_apis(self, cb):
+        self._win.query_public_apis = cb
 
     def set_audio_level(self, level: float) -> None:
         """Thread-safe: feed a 0.0–1.0 live audio level to the HUD waveform.
@@ -6596,6 +8019,18 @@ class JarvisUI:
     def load_gev(self) -> None:
         self.send_to_gev({"action": "open"})
 
+    def show_gev_tab(self) -> None:
+        """Thread-safe: show the Chrome-controlled GEV workspace."""
+        self._win._gev_show_sig.emit()
+
+    def show_gev_chrome(self) -> None:
+        """Thread-safe: open GEV focused on its visible Chrome panel."""
+        self._win._gev_chrome_show_sig.emit()
+
+    def set_gev_chrome_expanded(self, expanded: bool) -> None:
+        """Thread-safe: resize the embedded Chrome panel within the GEV workspace."""
+        self._win._gev_chrome_expand_sig.emit(bool(expanded))
+
     def show_gemini_chat(self) -> None:
         """Thread-safe: show the embedded Gemini chat panel."""
         self._win._gemini_chat_sig.emit()
@@ -6615,6 +8050,26 @@ class JarvisUI:
         if "error" in response:
             self.write_log(
                 f"Streaming: conferma non disponibile; Chrome non è stato aperto: "
+                f"{response['error']}"
+            )
+            return False
+        return response.get("confirmed") is True
+
+    def confirm_dependency_install(self, package: str, timeout: float = 120) -> bool:
+        """Ask on the Qt UI thread before installing a project dependency."""
+        if QThread.currentThread() == self._win.thread():
+            return self._win._confirm_dependency_install_direct(package)
+
+        response: dict = {"event": threading.Event()}
+        self._win._dependency_install_confirm_sig.emit(package, response)
+        if not response["event"].wait(timeout):
+            self.write_log(
+                f"Installazione di {package}: conferma scaduta, pacchetto non installato."
+            )
+            return False
+        if "error" in response:
+            self.write_log(
+                f"Installazione di {package}: conferma non disponibile: "
                 f"{response['error']}"
             )
             return False

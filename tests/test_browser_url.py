@@ -169,6 +169,124 @@ def test_integrated_browser_open_and_close_restore_previous_stack():
     assert window._browser_return_widget is None
 
 
+def test_external_browser_action_opens_current_webview_url(monkeypatch):
+    from types import SimpleNamespace
+
+    from ui import MainWindow
+
+    calls = []
+    messages = []
+    window = SimpleNamespace(
+        _browser_view=SimpleNamespace(
+            url=lambda: SimpleNamespace(
+                toString=lambda: "https://www.youtube.com/watch?v=example"
+            )
+        ),
+        _browser_status=SimpleNamespace(setText=messages.append),
+        _log_sig=SimpleNamespace(emit=messages.append),
+    )
+    monkeypatch.setattr(
+        "ui.webbrowser.open",
+        lambda url, new=0: calls.append((url, new)) or True,
+    )
+
+    assert MainWindow._open_current_browser_externally(window) is True
+    assert calls == [("https://www.youtube.com/watch?v=example", 2)]
+    assert messages == [
+        "Browser esterno: apertura richiesta per "
+        "https://www.youtube.com/watch?v=example",
+        "URL aperto nel browser esterno.",
+    ]
+
+
+def test_external_browser_button_opens_loaded_url(monkeypatch):
+    import os
+    import sys
+    from types import SimpleNamespace
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PyQt6.QtWidgets import QApplication
+
+    from ui import JarvisUI
+
+    app = QApplication.instance() or QApplication(sys.argv)
+    jarvis = JarvisUI("")
+    window = jarvis._win
+    opened = []
+    monkeypatch.setattr(
+        "ui.webbrowser.open",
+        lambda url, new=0: opened.append((url, new)) or True,
+    )
+    try:
+        window._browser_view = SimpleNamespace(
+            url=lambda: SimpleNamespace(
+                toString=lambda: "https://www.youtube.com/watch?v=example"
+            )
+        )
+        window._browser_external_button.click()
+
+        assert opened == [
+            ("https://www.youtube.com/watch?v=example", 2)
+        ]
+    finally:
+        window._layout_timer.stop()
+        window.close()
+
+
+def test_external_browser_action_reports_rejected_webview_scheme(monkeypatch):
+    from types import SimpleNamespace
+
+    from ui import MainWindow
+
+    messages = []
+    window = SimpleNamespace(
+        _browser_view=SimpleNamespace(
+            url=lambda: SimpleNamespace(
+                toString=lambda: "javascript:alert(1)"
+            )
+        ),
+        _browser_status=SimpleNamespace(setText=messages.append),
+        _log_sig=SimpleNamespace(emit=messages.append),
+    )
+    monkeypatch.setattr(
+        "ui.webbrowser.open",
+        lambda *_args, **_kwargs: pytest.fail("Unsafe URL must not be opened"),
+    )
+
+    assert MainWindow._open_current_browser_externally(window) is False
+    assert len(messages) == 2
+    assert "Only http and https" in messages[0]
+
+
+def test_external_browser_action_uses_desktop_fallback(monkeypatch):
+    from types import SimpleNamespace
+
+    import ui
+    from ui import MainWindow
+
+    calls = []
+    messages = []
+    window = SimpleNamespace(
+        _browser_view=SimpleNamespace(
+            url=lambda: SimpleNamespace(
+                toString=lambda: "https://example.org"
+            )
+        ),
+        _browser_status=SimpleNamespace(setText=messages.append),
+        _log_sig=SimpleNamespace(emit=messages.append),
+    )
+    monkeypatch.setattr("ui.webbrowser.open", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(
+        ui.QDesktopServices,
+        "openUrl",
+        lambda url: calls.append(url.toString()) or True,
+    )
+
+    assert MainWindow._open_current_browser_externally(window) is True
+    assert calls == ["https://example.org/"]
+    assert messages[-1] == "URL aperto nel browser esterno."
+
+
 def test_open_website_tool_is_declared_with_required_url():
     main_file = Path(__file__).resolve().parents[1] / "main.py"
     module = ast.parse(main_file.read_text(encoding="utf-8"))
@@ -186,7 +304,7 @@ def test_open_website_tool_is_declared_with_required_url():
     youtube_tool = next(item for item in declarations if item["name"] == "youtube_video")
 
     assert browser_tool["parameters"]["required"] == ["url"]
-    assert "integrated browser" in browser_tool["description"]
+    assert "default Chrome profile" in browser_tool["description"]
     assert "only asks to open YouTube" in browser_tool["description"]
     assert "only asks to open YouTube" in youtube_tool["description"]
     assert "use open_website" in youtube_tool["description"]

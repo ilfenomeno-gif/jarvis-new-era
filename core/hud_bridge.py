@@ -14,6 +14,7 @@ Uso minimo:
 from __future__ import annotations
 
 import json
+import logging
 import os
 import platform
 import queue
@@ -53,6 +54,10 @@ class HudBridge:
         self.on_plugin: Callable[[str], None] | None = None    # click su una molecola plugin
         self.on_system: Callable[[str], None] | None = None    # azione dal tab SISTEMA dell'HUD
         self.on_iris_visibility: Callable[[bool], None] | None = None
+        self.symbiosis_provider: Callable[[], dict] | None = None
+        self.clipboard_history_provider: Callable[[], list[dict]] | None = None
+        self.network_details_provider: Callable[[str], dict] | None = None
+        self._chat_listener: Callable[[str, str], None] | None = None
         self._clients: set[queue.Queue] = set()
         self._lock = threading.Lock()
         self._stats: dict[str, float | int | str | None] = {
@@ -110,6 +115,30 @@ class HudBridge:
                     self.wfile.write(data)
                 elif request_path == "/events":
                     self._sse()
+                elif request_path == "/api/symbiosis/clipboard":
+                    if self.headers.get("X-HUD") != "1":
+                        return self.send_error(403)
+                    if bridge.clipboard_history_provider is None:
+                        return self.send_error(503, "Monitoraggio appunti non disponibile")
+                    try:
+                        self._send_json({"items": bridge.clipboard_history_provider()})
+                    except (OSError, ValueError):
+                        logging.getLogger(__name__).exception("[SYMBIOSIS][HUD] Lettura appunti non riuscita")
+                        return self.send_error(500, "Impossibile leggere gli appunti")
+                elif request_path.startswith("/api/symbiosis/network/"):
+                    if self.headers.get("X-HUD") != "1":
+                        return self.send_error(403)
+                    category = request_path.removeprefix("/api/symbiosis/network/")
+                    if category not in {"wifi", "interfaces", "ports", "neighbors", "public_ip"}:
+                        return self.send_error(404)
+                    if bridge.network_details_provider is None:
+                        return self.send_error(503, "Monitoraggio rete non disponibile")
+                    try:
+                        self._send_json(bridge.network_details_provider(category))
+                    except (OSError, ValueError, RuntimeError) as exc:
+                        logging.getLogger(__name__).warning(
+                            "[SYMBIOSIS][HUD] Dettagli rete non disponibili: %s", type(exc).__name__)
+                        return self.send_error(503, "Dettagli rete non disponibili")
                 elif request_path in {"/api/tasks", "/api/tasks/"}:
                     if self.headers.get("X-HUD") != "1":
                         return self.send_error(403)
@@ -239,6 +268,8 @@ class HudBridge:
 
     def push_chat(self, role: str, text: str) -> None:
         self._broadcast({"type": "chat", "role": role, "text": text})
+        if self._chat_listener is not None:
+            self._chat_listener(role, text)
 
     def push_chat_stream(self, phase: str, text: str = "") -> None:
         """Publish an incremental assistant message on the existing HUD SSE channel."""
@@ -247,6 +278,15 @@ class HudBridge:
         if not isinstance(text, str):
             raise TypeError("chat stream text must be a string")
         self._broadcast({"type": "chat_stream", "phase": phase, "text": text})
+        if self._chat_listener is not None:
+            self._chat_listener("stream", f"{phase}\n{text}")
+
+    def set_chat_listener(
+        self, listener: Callable[[str, str], None] | None
+    ) -> None:
+        if listener is not None and not callable(listener):
+            raise TypeError("chat listener must be callable or None")
+        self._chat_listener = listener
 
     def set_task_snapshot(self, tasks: list[dict]) -> None:
         """Cache task details for the HUD and publish a result-free snapshot."""
@@ -323,13 +363,13 @@ class HudBridge:
     def open_window(self, mode: str = "app") -> None:
         url = self.url
         if mode == "app" and sys.platform == "win32":
-            for base in (os.environ.get("ProgramFiles(x86)", ""), os.environ.get("ProgramFiles", ""),
-                         os.environ.get("LOCALAPPDATA", "")):
-                for rel in (r"Microsoft\Edge\Application\msedge.exe", r"Google\Chrome\Application\chrome.exe"):
-                    exe = Path(base) / rel
-                    if base and exe.exists():
-                        subprocess.Popen([str(exe), f"--app={url}", "--window-size=1320,820"])
-                        return
+            from core.gev_chrome import open_chrome_url
+
+            try:
+                open_chrome_url(url)
+                return
+            except FileNotFoundError:
+                pass
         webbrowser.open(url)
 
     # ------------------------------------------------------------------ interni
@@ -408,7 +448,14 @@ class HudBridge:
             else:
                 self._gpu_name = ""
             self._stats = s
-            self._broadcast({"type": "stats", "stats": s, "gpu_name": self._gpu_name})
+            symbiosis = None
+            if self.symbiosis_provider is not None:
+                try:
+                    symbiosis = self.symbiosis_provider()
+                except Exception:
+                    logging.getLogger(__name__).exception("[SYMBIOSIS][HUD] Lettura stato non riuscita")
+            self._broadcast({"type": "stats", "stats": s, "gpu_name": self._gpu_name,
+                             "symbiosis": symbiosis})
             self._stop.wait(1.0)
 
 

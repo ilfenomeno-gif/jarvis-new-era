@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from google.genai import types
 
 from core import gemini
-
-CHAT_MODEL = "gemini-3.8-flash"
+from core.chat_formatting import MARKDOWN_LIST_INSTRUCTION
 
 
 @dataclass(frozen=True)
@@ -18,11 +18,18 @@ class GeminiChatResult:
 
 
 def _thinking_config_is_unsupported(error: Exception) -> bool:
-    code = getattr(error, "code", None) or getattr(error, "status_code", None)
-    message = str(error).casefold()
-    return code in (400, "400", "INVALID_ARGUMENT") and (
-        "thinking" in message or "include_thoughts" in message
-    )
+    current: BaseException | None = error
+    while current is not None:
+        code = getattr(current, "code", None) or getattr(current, "status_code", None)
+        message = str(current).casefold()
+        unsupported = "thinking" in message or "include_thoughts" in message
+        if unsupported and (
+            code in (400, "400", "INVALID_ARGUMENT")
+            or "400" in message
+        ):
+            return True
+        current = current.__cause__
+    return False
 
 
 def _response_text(
@@ -55,12 +62,38 @@ def _response_text(
     return answer, tuple(thought_summaries)
 
 
+def _conversation_prompt(prompt: str, history: list[dict] | None) -> str:
+    turns = []
+    for turn in history or []:
+        role = turn.get("role")
+        speaker = "User" if role == "user" else "Gemini"
+        parts = turn.get("parts", [])
+        text = "\n".join(
+            part["text"]
+            for part in parts
+            if isinstance(part, dict)
+            and isinstance(part.get("text"), str)
+            and part["text"].strip()
+        )
+        if text:
+            turns.append(f"{speaker}: {text}")
+    if not turns:
+        return prompt
+    return (
+        "Conversation so far:\n"
+        + "\n".join(turns)
+        + f"\n\nCurrent message from user:\n{prompt}"
+    )
+
+
 def ask_gemini_with_thoughts(
     prompt: str,
     history: list[dict] | None = None,
     timeout_ms: int = 30_000,
     thinking_level: str = "high",
     include_thoughts: bool = True,
+    on_chunk: Callable[[str], None] | None = None,
+    system_instruction: str | None = None,
 ) -> GeminiChatResult:
     """Return a response and any provider-supplied thought summaries."""
     if not isinstance(prompt, str) or not prompt.strip():
@@ -77,34 +110,72 @@ def ask_gemini_with_thoughts(
         ) from exc
     if type(include_thoughts) is not bool:
         raise RuntimeError("Gemini include_thoughts must be a boolean.")
+    if system_instruction is not None and (
+        not isinstance(system_instruction, str) or not system_instruction.strip()
+    ):
+        raise RuntimeError("Gemini system_instruction must be a non-empty string.")
 
-    contents = (history or []) + [{"role": "user", "parts": [{"text": prompt}]}]
+    contents = _conversation_prompt(prompt, history)
     config = types.GenerateContentConfig(
+        system_instruction=(system_instruction or (
+            "You are JARVIS, the user's helpful AI assistant. Respond naturally "
+            "to the current message, use the conversation history when relevant, "
+            "and answer in the user's language. Do not claim that you are not "
+            "JARVIS or that you are only a data-processing function. Be concise "
+            "unless the user asks for detail."
+        )) + "\n\n" + MARKDOWN_LIST_INSTRUCTION,
         thinking_config=types.ThinkingConfig(
             thinking_level=level,
             include_thoughts=include_thoughts,
         )
     )
 
-    try:
-        client = gemini.client(timeout_ms=timeout_ms)
-        try:
-            response = client.models.generate_content(
-                model=CHAT_MODEL,
-                contents=contents,
-                config=config,
-            )
-        except Exception as exc:
-            if not _thinking_config_is_unsupported(exc):
-                raise
-            response = client.models.generate_content(
-                model=CHAT_MODEL,
-                contents=contents,
-            )
-    except Exception as exc:
-        raise RuntimeError(f"Gemini request failed: {exc}") from exc
+    streamed_chunks: list[str] = []
 
-    answer, thought_summaries = _response_text(response, include_thoughts)
+    def generate(config_to_use):
+        if on_chunk is None:
+            kwargs = {
+                "tier": gemini.CHAT,
+                "timeout_ms": timeout_ms,
+                "raise_on_failure": True,
+            }
+            if config_to_use is not None:
+                kwargs["config"] = config_to_use
+            return gemini.call(contents, **kwargs)
+        kwargs = {"tier": gemini.CHAT, "timeout_ms": timeout_ms}
+        if config_to_use is not None:
+            kwargs["config"] = config_to_use
+        for chunk in gemini.stream(contents, **kwargs):
+            text = getattr(chunk, "text", None)
+            if isinstance(text, str) and text:
+                streamed_chunks.append(text)
+                on_chunk(text)
+        return None
+
+    try:
+        response = generate(config)
+    except Exception as exc:
+        if streamed_chunks:
+            raise RuntimeError(
+                f"Gemini streaming failed after partial output: {exc}"
+            ) from exc
+        if _thinking_config_is_unsupported(exc):
+            try:
+                response = generate(types.GenerateContentConfig(
+                    system_instruction=config.system_instruction,
+                ))
+            except Exception as fallback_exc:
+                raise RuntimeError(
+                    f"Gemini request failed: {fallback_exc}"
+                ) from fallback_exc
+        else:
+            raise RuntimeError(f"Gemini request failed: {exc}") from exc
+
+    if on_chunk is not None:
+        answer = "".join(streamed_chunks)
+        thought_summaries = ()
+    else:
+        answer, thought_summaries = _response_text(response, include_thoughts)
     if not isinstance(answer, str) or not answer.strip():
         raise RuntimeError(
             "Gemini returned an empty response. Check model access, "
@@ -119,6 +190,7 @@ def ask_gemini(
     timeout_ms: int = 30_000,
     thinking_level: str = "high",
     include_thoughts: bool = True,
+    system_instruction: str | None = None,
 ) -> str:
     """Return a Gemini response for a non-empty prompt, or raise RuntimeError."""
     return ask_gemini_with_thoughts(
@@ -127,4 +199,5 @@ def ask_gemini(
         timeout_ms=timeout_ms,
         thinking_level=thinking_level,
         include_thoughts=include_thoughts,
+        system_instruction=system_instruction,
     ).answer

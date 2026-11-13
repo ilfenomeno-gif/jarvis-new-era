@@ -11,14 +11,20 @@
 html,body{height:100%;background:var(--bg);color:var(--tx);font-family:Rajdhani,"Segoe UI",sans-serif;overflow:hidden}
 canvas#gl{position:fixed;inset:0;width:100%;height:100%;touch-action:none;cursor:grab}
 body.hud-hidden .hud{display:none}
+body.hud-hidden #pop{display:none!important}
 #hudRestore{display:none;position:fixed;top:10px;left:12px;z-index:40}
 body.hud-hidden #hudRestore{display:block}
 .hud{position:fixed;inset:0;z-index:20;display:grid;grid-template-columns:minmax(200px,250px) 1fr minmax(300px,390px);grid-template-rows:auto 1fr auto;gap:12px;padding:calc(12px + env(safe-area-inset-top,0px)) 12px calc(12px + env(safe-area-inset-bottom,0px));pointer-events:none}
+body.hud-panel-left-hidden #left,body.hud-panel-info-hidden #info,body.hud-panel-bar-hidden #bar{visibility:hidden!important;opacity:0!important;pointer-events:none!important}
+.hud>.panel{contain:layout style paint}
 .panel{pointer-events:auto;background:var(--panel);border:1px solid var(--line);backdrop-filter:blur(8px);clip-path:polygon(0 0,calc(100% - 14px) 0,100% 14px,100% 100%,14px 100%,0 calc(100% - 14px));padding:12px 15px;overflow:auto;box-shadow:inset 0 0 30px rgba(77,243,255,.06)}
 h1{font:800 14px Orbitron,sans-serif;letter-spacing:.16em;color:var(--cy)}
 h2{font:500 11px Orbitron,sans-serif;letter-spacing:.12em;color:var(--am);margin-bottom:8px}
 header{grid-column:1/4;display:flex;justify-content:space-between;align-items:center;gap:12px;pointer-events:auto}
 header small{color:var(--dim);font-size:14px}
+#panelDots{display:flex;align-items:center;gap:6px;margin-left:auto}
+.panel-dot{width:18px;height:18px;padding:0;border-radius:50%;font-size:11px;line-height:1;color:var(--cy)}
+.panel-dot[aria-pressed="false"]{color:var(--dim);border-color:var(--dim);background:transparent}
 #clock{font:500 16px Orbitron,sans-serif;color:var(--cy)}
 #left{grid-row:2;padding:8px 6px}#list{list-style:none}
 #list li{padding:6px 10px;border-left:2px solid transparent;cursor:pointer;display:flex;align-items:center;gap:8px;font-size:15px;white-space:nowrap}
@@ -49,7 +55,7 @@ body::before{content:"";position:fixed;inset:0;z-index:5;pointer-events:none;bac
 body::after{content:"";position:fixed;inset:0;z-index:4;pointer-events:none;background:radial-gradient(ellipse at center,transparent 55%,rgba(0,6,10,.85))}
 .panel{border-color:rgba(0,212,255,.4);box-shadow:inset 0 0 30px rgba(0,212,255,.08),0 0 18px rgba(0,212,255,.14);background:linear-gradient(180deg,rgba(0,212,255,.08),transparent 40%),var(--panel)}
 #info{display:flex;flex-direction:column;overflow:hidden}.tv{flex:1;min-height:0;overflow:auto}.tv[hidden]{display:none}
-#tabs{display:flex;gap:4px;margin-bottom:8px}#tabs button{flex:1;font-family:Orbitron,sans-serif;font-size:11px;letter-spacing:.1em}#tabs button.on{background:var(--cy);color:#00060a}
+#tabs{display:flex;gap:4px;margin-bottom:8px}#tabs button{flex:1;font-family:Orbitron,sans-serif;font-size:11px;letter-spacing:.1em}#tabs button[data-t="plugins"]{font-size:8px;letter-spacing:0}#tabs button.on{background:var(--cy);color:#00060a}
 .sysrow{display:flex;align-items:center;gap:8px;padding:7px 4px;border-bottom:1px solid var(--line);font-size:14px}
 .sysrow span{flex:1;color:var(--tx)}
 .sysrow b{color:var(--dim);font-weight:400;font-size:12px}
@@ -66,9 +72,13 @@ body::after{content:"";position:fixed;inset:0;z-index:4;pointer-events:none;back
 body.iris-mode #gl,body.iris-mode #tags{display:none}
 body.iris-mode .hud{display:block;position:fixed;inset:0;z-index:60;padding:0;pointer-events:none}
 body.iris-mode .hud>*:not(#info){display:none!important}
-body.iris-mode #info{display:flex!important;position:fixed;left:16px;right:auto;top:auto;bottom:16px;width:min(440px,calc(100vw - 32px));height:min(34vh,300px);min-height:160px;z-index:60;pointer-events:auto;background:rgba(1,13,20,.88)}
+body.iris-mode #info{display:flex!important;visibility:visible!important;opacity:1!important;position:fixed;left:50%;right:auto;top:auto;bottom:16px;transform:translateX(-50%);width:min(560px,calc(100vw - 32px));height:auto;min-height:0;z-index:60;pointer-events:auto;padding:0;border:0;background:transparent;box-shadow:none;backdrop-filter:none;overflow:visible}
 body.iris-mode #tabs,body.iris-mode #tr{display:none!important}
-body.iris-mode #chat{display:flex!important}
+body.iris-mode #info{max-height:60vh;overflow:hidden}
+body.iris-mode #chat{display:flex!important;flex:0 1 auto;min-height:0;overflow:visible;padding:0;background:transparent;border:0;box-shadow:none;backdrop-filter:none}
+body.iris-mode #msgs,body.iris-mode #task-dots{display:none!important}
+body.iris-mode #inrow{padding:7px;background:rgba(1,13,20,.94);border:1px solid var(--line);box-shadow:0 0 18px rgba(0,212,255,.2)}
+body.iris-mode .m small{display:none!important}
 body.iris-mode #hudRestore,body.iris-mode #pop{display:none!important}
 #humanoidHead{position:absolute;top:10px;right:12px;z-index:2;display:flex;align-items:center;gap:12px;padding:5px 9px;font:800 11px Orbitron,sans-serif;letter-spacing:.12em;color:var(--cy);background:var(--panel);border:1px solid var(--line)}
 #humanoidHead button{background:transparent;border:none;color:var(--am);font-size:18px;cursor:pointer}
@@ -144,10 +154,15 @@ body.iris-mode #hudRestore,body.iris-mode #pop{display:none!important}
 <canvas id="gl" aria-label="Mappa 3D di JARVIS"></canvas>
 <div id="tags"></div>
 <div class="hud">
- <header class="panel"><h1>JARVIS VII · IRIS</h1><small>Iris disponibile su richiesta · chat, sistemi, metriche e mappa 3D restano disponibili</small><div id="clock">--:--:--</div></header>
+ <header class="panel"><h1>JARVIS VII · IRIS</h1><small>Iris disponibile su richiesta · chat, sistemi, metriche e mappa 3D restano disponibili</small><div id="panelDots" aria-label="Pannelli HUD"><button class="panel-dot" type="button" data-panel-target="left" aria-label="Nascondi metriche" aria-pressed="true" title="Metriche">●</button><button class="panel-dot" type="button" data-panel-target="info" aria-label="Nascondi chat e dati" aria-pressed="true" title="Chat e dati">●</button><button class="panel-dot" type="button" data-panel-target="bar" aria-label="Nascondi barra comandi" aria-pressed="true" title="Barra comandi">●</button></div><div id="clock">--:--:--</div></header>
  <div id="left" class="panel"><div id="gauges"></div><ul id="list" aria-label="Pianeti"></ul></div>
  <div></div>
- <aside id="info" class="panel"><nav id="tabs"><button class="on" data-t="chat">CHAT</button><button data-t="dati">DATI</button><button data-t="sistema">SISTEMA</button></nav><div id="chat" class="tv"><div id="msgs"></div><div id="task-dots" aria-label="Task in background" hidden></div><div id="inrow"><input id="q" placeholder="Chiedi a JARVIS…" autocomplete="off"><button id="send">▶</button></div><div id="tr"><span id="trt">TaskRunner: 0% - idle</span><div id="trb"><i></i></div></div></div><div id="dati" class="tv" hidden><select id="sec"></select><div id="dv"></div><button id="exp">Esporta JSON</button></div><div id="sistema" class="tv" hidden>
+ <aside id="info" class="panel"><nav id="tabs"><button class="on" data-t="chat" type="button">CHAT</button><button data-t="dati" type="button">DATI</button><button data-t="sistema" type="button">SISTEMA</button><button data-t="plugins" type="button">PLUGINS &amp; CONNECTIONS</button></nav><div id="chat" class="tv"><div id="msgs"></div><div id="task-dots" aria-label="Task in background" hidden></div><div id="inrow"><input id="q" placeholder="Chiedi a Jarvis" autocomplete="off"><button id="send">▶</button></div><div id="tr"><span id="trt">TaskRunner: 0% - idle</span><div id="trb"><i></i></div></div></div><div id="dati" class="tv" hidden><select id="sec"></select><div id="dv"></div><button id="exp">Esporta JSON</button></div><div id="sistema" class="tv" hidden>
+  <h2>SIMBIOSI</h2><pre id="symbiosis-status" style="white-space:pre-wrap">Non disponibile</pre>
+  <button id="symbiosis-clipboard-reveal" type="button">Mostra ultimi 10 appunti</button>
+  <pre id="symbiosis-clipboard" style="white-space:pre-wrap"></pre>
+  <div id="symbiosis-network-controls"><button type="button" data-network="wifi">Wi-Fi</button><button type="button" data-network="interfaces">Interfacce e DNS</button><button type="button" data-network="ports">Porte</button><button type="button" data-network="neighbors">Dispositivi</button><button type="button" data-network="public_ip">IP pubblico</button><button type="button" id="symbiosis-network-hide">Nascondi dettagli</button></div>
+  <pre id="symbiosis-network" style="white-space:pre-wrap"></pre>
   <h2>FINESTRA</h2>
   <div class="sysrow" data-a="fullscreen"><span>Schermo intero</span><b>F11</b><button class="sysbtn">Attiva</button></div>
   <div class="sysrow" data-a="desktop_shortcut"><span>Collegamento sul desktop</span><b>crea un file .url</b><button class="sysbtn">Crea</button></div>
@@ -160,8 +175,12 @@ body.iris-mode #hudRestore,body.iris-mode #pop{display:none!important}
   <div class="sysrow" data-a="audio"><span>Audio device</span><b>ingresso e uscita</b><button class="sysbtn">Apri</button></div>
   <div class="sysrow" data-a="memory"><span>Memory</span><b>categorie della memoria</b><button class="sysbtn">Apri</button></div>
   <div class="sysrow" data-a="plugins"><span>Plugins</span><b>abilita o disabilita</b><button class="sysbtn">Apri</button></div>
+ </div><div id="plugins" class="tv" hidden>
+  <h2>PLUGINS &amp; CONNECTIONS</h2>
+  <p>Collega e gestisci i servizi OAuth configurati in Jarvis.</p>
+  <div class="sysrow" data-a="connections"><span>Integrazioni</span><b>Google, GitHub e altri servizi disponibili</b><button class="sysbtn">Apri</button></div>
  </div></aside>
- <div class="bar panel">
+ <div id="bar" class="bar panel">
   <div class="btns" id="btns"></div>
   <div><div id="chips"></div><div id="log">Sistemi online. Trascina per ruotare, clicca un modulo o lancia un comando.</div></div>
   <canvas id="wave" width="440" height="84"></canvas>
@@ -297,8 +316,11 @@ const list=$("list"),tags=$("tags");let sel="core",psub=null,view="main",vt=0;
 M.forEach(m=>{const li=document.createElement("li");if(m.g)li.className="ghost";li.innerHTML=`<i></i><span class="rk">${String(m.rk).padStart(2,"0")}</span>${m.nm}`;li.onclick=()=>pick(m.id);m.li=li;list.appendChild(li);
  const t=document.createElement("div");t.className="tag";t.textContent=(m.rk?"#"+m.rk+" ":"")+m.nm;tags.appendChild(t);m.tag=t});
 function pick(id,open=true){if(open)setVisualMode("map");sel=id;psub=null;const m=by[id];M.forEach(k=>{k.li.classList.toggle("on",k.id===id);k.tag.classList.toggle("on",k.id===id)});
- if(!open)return;$("pn").textContent=m.nm;$("pp").textContent=m.p;$("ps").textContent=(m.rk?"#"+m.rk+" · ":"")+m.st;$("pd").textContent=m.d;$("pm").innerHTML=m.m.map(x=>`<li>${esc(x)}</li>`).join("");sysUI(id);if(view==="main"&&LK[id])$("log").innerHTML=`<b>${esc(m.nm)}</b> · collegato a: ${LK[id].map(x=>esc(by[x].nm)).join(", ")}`;$("pop").hidden=false;$("pop").classList.remove("min");$("pmn").textContent="−";$("pop").scrollTop=0;placePop()}
-function placePop(){const p=$("pop");if(p.hidden)return;const m=psub||by[sel],w=p.offsetWidth,h=p.offsetHeight,sx=m.sx||W/2,sy=m.sy||H/2;let x=sx+44,y=sy-h/2;if(x+w>W-8)x=sx-w-44;x=Math.max(8,Math.min(W-w-8,x));y=Math.max(8,Math.min(H-h-8,y));p.style.transform=`translate(${x}px,${y}px)`}
+ if(!open)return;$("pn").textContent=m.nm;$("pp").textContent=m.p;$("ps").textContent=(m.rk?"#"+m.rk+" · ":"")+m.st;$("pd").textContent=m.d;$("pm").innerHTML=m.m.map(x=>`<li>${esc(x)}</li>`).join("");sysUI(id);if(view==="main"&&LK[id])$("log").innerHTML=`<b>${esc(m.nm)}</b> · collegato a: ${LK[id].map(x=>esc(by[x].nm)).join(", ")}`;$("pop").hidden=false;$("pop").classList.remove("min");$("pmn").textContent="−";$("pop").scrollTop=0;placePop(true);saveHudLayout()}
+let popWidth=0,popHeight=0;
+function measurePop(){const p=$("pop");if(!p.hidden){popWidth=p.offsetWidth;popHeight=p.offsetHeight}}
+if(typeof ResizeObserver!=="undefined")new ResizeObserver(measurePop).observe($("pop"));
+function placePop(measure=false){const p=$("pop");if(p.hidden)return;if(measure||!popWidth||!popHeight)measurePop();const m=psub||by[sel],w=popWidth,h=popHeight,sx=m.sx||W/2,sy=m.sy||H/2;let x=sx+44,y=sy-h/2;if(x+w>W-8)x=sx-w-44;x=Math.max(8,Math.min(W-w-8,x));y=Math.max(8,Math.min(H-h-8,y));p.style.transform=`translate(${x}px,${y}px)`}
 function sysUI(id){const el=$("psys");el.innerHTML="";
  if(id==="core"){const t=document.createElement("h2");t.textContent="SISTEMI SOLARI";el.appendChild(t);const g=document.createElement("div");g.className="sg";el.appendChild(g);
   M.filter(m=>m.id!=="core").forEach(m=>{const b=document.createElement("button");b.textContent=m.rk+" · "+m.nm;b.onclick=()=>openSystem(m.id);g.appendChild(b)})}
@@ -307,7 +329,7 @@ function pickSub(s){const m=s.mod;psub=s;sel=m.id;M.forEach(k=>{k.li.classList.t
  $("pn").textContent=m.nm+" · componente "+(s.i+1);$("pp").textContent=m.p;$("ps").textContent="#"+m.rk+" · "+m.st;$("pd").textContent=s.txt;
  $("pm").innerHTML=m.m.map((x,i)=>`<li>${i===s.i?"▸ ":""}${esc(x)}</li>`).join("");
  const el=$("psys");el.innerHTML="";const b=document.createElement("button");b.textContent="◄ TORNA A JARVIS";b.onclick=()=>openSystem(null);el.appendChild(b);
- $("pop").hidden=false;$("pop").classList.remove("min");$("pmn").textContent="−";$("pop").scrollTop=0;placePop()}
+ $("pop").hidden=false;$("pop").classList.remove("min");$("pmn").textContent="−";$("pop").scrollTop=0;placePop(true)}
 function openSystem(id,tr){if(!tr&&touring){tourTok++;touring=false;$("tourb").textContent="TOUR"}setVisualMode("map");if((id||"main")===view)return;view=id||"main";vt=0;psub=null;$("pop").hidden=true;const main=view==="main";
  [core,orb1,orb2,orb3].forEach(o=>o.visible=main);M.forEach(m=>{if(m.ln)m.ln.visible=main});
  Object.values(SYS).forEach(y=>{y.G.visible=false;y.subs.forEach(s=>s.tag.style.display="none")});
@@ -399,7 +421,7 @@ const selRing=new T.Mesh(new T.TorusGeometry(.7,.02,8,64),new T.MeshBasicMateria
  const g=new T.BufferGeometry();g.setAttribute("position",new T.BufferAttribute(p,3));sc.add(new T.Points(g,new T.PointsMaterial({size:.07,color:0x8fe8ff,transparent:true,opacity:.6,blending:T.AdditiveBlending,depthWrite:false})))}
 // ------- camera / input -------
 let yaw=.6,pit=.38,dist=12,tY=.6,tP=.38,drag=null,moved=0,W,H;
-function rs(){W=innerWidth;H=innerHeight;R.setSize(W,H,false);cam.aspect=W/H;cam.updateProjectionMatrix();dist=W/H<1?27:17.5}rs();addEventListener("resize",rs);
+function rs(){W=innerWidth;H=innerHeight;R.setSize(W,H,false);cam.aspect=W/H;cam.updateProjectionMatrix();dist=W/H<1?27:17.5;placePop(true)}rs();addEventListener("resize",rs);
 cv.addEventListener("pointerdown",e=>{drag=[e.clientX,e.clientY];moved=0;cv.setPointerCapture(e.pointerId);cv.style.cursor="grabbing"});
 cv.addEventListener("pointermove",e=>{if(!drag)return;const dx=e.clientX-drag[0],dy=e.clientY-drag[1];moved+=Math.abs(dx)+Math.abs(dy);tY-=dx*.006;tP=Math.max(-.2,Math.min(1.2,tP+dy*.005));drag=[e.clientX,e.clientY]});
 cv.addEventListener("pointerup",e=>{cv.style.cursor="grab";if(drag&&moved<6){const rc=new T.Raycaster();rc.setFromCamera(new T.Vector2(e.clientX/W*2-1,-(e.clientY/H)*2+1),cam);const h=rc.intersectObjects(view==="main"?[hit,...modMesh]:SYS[view].pk)[0];if(h){const u=h.object.userData;u.sub?pickSub(u.sub):pick(u.id)}else $("pop").hidden=true}drag=null});
@@ -417,38 +439,98 @@ async function run(name){setVisualMode("map");if(view!=="main")openSystem(null);
 const wc=$("wave"),wg=wc.getContext("2d");function wave(t){wg.clearRect(0,0,440,84);wg.strokeStyle="#00d4ff";wg.lineWidth=2;wg.beginPath();for(let x=0;x<=440;x+=3){const y=42+Math.sin(x*.05+t*4)*14*amp*Math.sin(x*.012+t)+Math.sin(x*.13-t*7)*6*amp;x?wg.lineTo(x,y):wg.moveTo(x,y)}wg.stroke()}
 // ------- loop -------
 let t=0,last=performance.now(),lastRender=0,renderFrame=0;
-function frame(now){if(document.body.classList.contains("iris-mode")){renderFrame=0;return}if(now-lastRender<1000/30){renderFrame=requestAnimationFrame(frame);return}const dt=Math.min((now-last)/1000,.05);last=now;lastRender=now;t+=dt*K;
+function frame(now){renderFrame=0;if(document.visibilityState==="hidden"||document.body.classList.contains("iris-mode"))return;if(now-lastRender<1000/30){scheduleHudFrame();return}const dt=Math.min((now-last)/1000,.05);last=now;lastRender=now;t+=dt*K;
  tY+=dt*.05*K;yaw+=(tY-yaw)*.08;pit+=(tP-pit)*.08;
  cam.position.set(Math.sin(yaw)*Math.cos(pit)*dist,Math.sin(pit)*dist,Math.cos(yaw)*Math.cos(pit)*dist);cam.lookAt(0,0,0);
  br+=(amp-br)*.12;sp+=dt*(br-.25)*2.2*K;ia.rotation.y=t*.15+sp;ia.rotation.x=Math.sin(t*.2)*.3;ib.rotation.y=-t*.25-sp*1.3;ib.rotation.z=t*.1;mol.scale.setScalar(1+.04*Math.sin(t*2)+(br-.25)*.22*(1+.3*Math.sin(t*14)));ia.material.opacity=.8+.15*Math.sin(t*3);
  const pu=.5+.5*Math.sin(t*5);ia.material.size=.17+pu*.015+by.core.fl*.05;ib.material.size=.12+pu*.01+by.core.fl*.04;cl.intensity=3.2+pu*1.5;
  floorM.rotation.z=t*.04;orb1.rotation.y=t*.12;orb2.rotation.y=-t*.07;orb3.rotation.y=t*.04;
  M.forEach(m=>{m.fl=Math.max(0,m.fl-dt*1.2);if(m.id!=="core"){m.ring.rotation.z=t*.8;{const sl=view==="main"&&m.id===sel,lk=view==="main"&&LK[sel]&&LK[sel].includes(m.id),rm=m.ring.material,ps=.5+.5*Math.sin(t*6);rm.color.setHex(sl?0xff6b00:lk?0xffffff:m.g?0x4a6a78:0x00d4ff);rm.opacity=sl?1:lk?.55+.45*ps:m.g?.7:.7;m.ring.scale.setScalar(sl?1.18+.05*ps:lk?1.08+.04*ps:1)}if(m.pl)m.pl.rotation.y+=dt*.5*K;if(m.gl)m.gl.scale.setScalar(1.5+m.fl*1.8+(m.id===sel?.5:0));const p=wp(m.id,V),a=m.ln.geometry.attributes.position;a.setXYZ(0,0,0,0);a.setXYZ(1,p.x,p.y,p.z);a.needsUpdate=true;m.ln.material.opacity=m.g?.18:.16+m.fl*.7+(m.id===sel?.3:0)}
-  const q=wp(m.id,A).clone().project(cam);m.sx=(q.x*.5+.5)*W;m.sy=(-q.y*.5+.5)*H;m.tag.style.transform=`translate(${(q.x*.5+.5)*W+14}px,${(-q.y*.5+.5)*H-8}px)`;m.tag.style.display=q.z<1&&m.id!=="core"?"":"none"});
+  const q=wp(m.id,A).project(cam);m.sx=(q.x*.5+.5)*W;m.sy=(-q.y*.5+.5)*H;m.tag.style.transform=`translate(${(q.x*.5+.5)*W+14}px,${(-q.y*.5+.5)*H-8}px)`;m.tag.style.display=q.z<1&&m.id!=="core"?"":"none"});
  if(view!=="main"){M.forEach(m=>m.tag.style.display="none");const Y=SYS[view];vt+=0;const e=1-Math.pow(1-Math.min(1,vt*1.8),3);Y.G.scale.setScalar(e);Y.sa.rotation.y=t*.15;Y.sb.rotation.y=-t*.25;Y.sa.rotation.x=Math.sin(t*.2)*.3;
   Y.orbs.forEach((og,i)=>{og.rotation.y=i*2.4+t*.3/(1+i*.35)});
-  Y.subs.forEach(s=>{s.mesh.rotation.y+=dt*.6*K;const q=s.g.getWorldPosition(A).clone().project(cam);s.sx=(q.x*.5+.5)*W;s.sy=(-q.y*.5+.5)*H;s.tag.style.transform=`translate(${s.sx+12}px,${s.sy-8}px)`;s.tag.style.display=q.z<1?"":"none"})}
+  Y.subs.forEach(s=>{s.mesh.rotation.y+=dt*.6*K;const q=s.g.getWorldPosition(A).project(cam);s.sx=(q.x*.5+.5)*W;s.sy=(-q.y*.5+.5)*H;s.tag.style.transform=`translate(${s.sx+12}px,${s.sy-8}px)`;s.tag.style.display=q.z<1?"":"none"})}
  else{const e=1-Math.pow(1-Math.min(1,vt*1.8),3);[core,orb1,orb2,orb3].forEach(o=>o.scale.setScalar(e))}
  vt+=dt;selRing.visible=view==="main"&&sel==="core";selRing.position.copy(wp(sel,V));selRing.lookAt(cam.position);selRing.scale.setScalar((sel==="core"?2.7:1)*(1+.06*Math.sin(t*6)));
- for(let i=pulses.length-1;i>=0;i--){const p=pulses[i];p.t+=dt/.9;if(p.t>=1){sc.remove(p.s);pulses.splice(i,1);continue}wp(p.a,A);wp(p.b,B);p.s.position.lerpVectors(A,B,p.t);p.s.position.y+=Math.sin(p.t*Math.PI)*.8;p.s.scale.setScalar(.7+Math.sin(p.t*Math.PI)*.5)}
- placePop();wave(now/1000);R.render(sc,cam);renderFrame=requestAnimationFrame(frame)}
+ for(let i=pulses.length-1;i>=0;i--){const p=pulses[i];p.t+=dt/.9;if(p.t>=1){sc.remove(p.s);p.s.material.dispose();pulses.splice(i,1);continue}wp(p.a,A);wp(p.b,B);p.s.position.lerpVectors(A,B,p.t);p.s.position.y+=Math.sin(p.t*Math.PI)*.8;p.s.scale.setScalar(.7+Math.sin(p.t*Math.PI)*.5)}
+ placePop();wave(now/1000);R.render(sc,cam);scheduleHudFrame()}
+function scheduleHudFrame(){if(!renderFrame&&document.visibilityState==="visible"&&!document.body.classList.contains("iris-mode"))renderFrame=requestAnimationFrame(frame)}
+document.addEventListener("visibilitychange",()=>{if(document.visibilityState==="hidden"){cancelAnimationFrame(renderFrame);renderFrame=0}else{last=performance.now();lastRender=0;scheduleHudFrame()}})
 
 const esc=x=>x.replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])),norm=x=>x.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g,"");
-const TB=[...document.querySelectorAll("#tabs button")];TB.forEach(b=>b.onclick=()=>{TB.forEach(x=>x.classList.toggle("on",x===b));["chat","dati","sistema"].forEach(i=>$(i).hidden=i!==b.dataset.t)});
+const TB=[...document.querySelectorAll("#tabs button")];TB.forEach(b=>b.onclick=()=>{TB.forEach(x=>x.classList.toggle("on",x===b));["chat","dati","sistema","plugins"].forEach(i=>$(i).hidden=i!==b.dataset.t)});
 const secs=[{t:"PALETTE HUD",pal:1},...DATA.sections];secs.forEach((x,i)=>$("sec").add(new Option(x.t,i)));
 function dv(i){const x=secs[i];$("dv").innerHTML=x.pal?DATA.palette.map(([n,h])=>`<div class="sw"><i style="background:${h}"></i><b>${h}</b> ${esc(n)}</div>`).join(""):x.b.map(b=>b.k==="h"?`<h2>${esc(b.t)}</h2>`:b.k==="p"?`<p>${esc(b.t)}</p>`:b.k==="ul"?`<ul>${b.i.map(y=>`<li>${esc(y)}</li>`).join("")}</ul>`:`<div class="tw"><table><tr>${b.h.map(c=>`<th>${esc(c)}</th>`).join("")}</tr>${b.r.map(r=>`<tr>${r.map(c=>`<td>${esc(c)}</td>`).join("")}</tr>`).join("")}</table></div>`).join("")}
 $("sec").onchange=e=>dv(+e.target.value);dv(0);
 $("exp").onclick=()=>{try{const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([JSON.stringify({modules:M.map(({id,nm,p,st,d,m,r,g})=>({id,nm,p,st,d,m,r,g})),scenari:S,...DATA},null,1)],{type:"application/json"}));a.download="jarvis-hud-data.json";a.click()}catch(e){}};
 const docs=[];DATA.sections.forEach(x=>{let h="";x.b.forEach(b=>{if(b.k==="h")h=b.t;else if(b.k==="p")docs.push([x.t,h,b.t]);else if(b.k==="ul")b.i.forEach(y=>docs.push([x.t,h,y]));else b.r.forEach(r=>docs.push([x.t,h,b.h.map((c,k)=>c+": "+r[k]).join(" · ")]))})});
 const SW=/^(che|come|per|con|del|dei|della|delle|qual|quale|quali|sono|nel|nei|una|uno|gli|dove|cosa|fra|tra|mi|dai)$/;
-function say(w,h){const d=document.createElement("div");d.className="m "+w;d.innerHTML=h;$("msgs").appendChild(d);$("msgs").scrollTop=1e9;return d}
+function say(w,h){
+ const d=document.createElement("div");d.className="m "+w;
+ const template=document.createElement("template");template.innerHTML=String(h??"");
+ const appendSafe=(node,parent)=>{
+  if(node.nodeType===Node.TEXT_NODE){parent.appendChild(document.createTextNode(node.nodeValue||""));return}
+  if(node.nodeType!==Node.ELEMENT_NODE)return;
+  const tag=node.tagName.toLowerCase();
+  if(tag==="br"||tag==="hr"){parent.appendChild(document.createElement(tag));return}
+  if(tag==="b"||tag==="small"){
+   const safe=document.createElement(tag);Array.from(node.childNodes).forEach(child=>appendSafe(child,safe));parent.appendChild(safe);return
+  }
+  Array.from(node.childNodes).forEach(child=>appendSafe(child,parent))
+ };
+ Array.from(template.content.childNodes).forEach(node=>appendSafe(node,d));
+ $("msgs").appendChild(d);$("msgs").scrollTop=1e9;return d
+}
+function renderChatMarkdown(node,text){
+ node.replaceChildren();
+ let list=null;
+ function inline(parent,line){
+  const parts=line.split(/(\*\*[^*\n]+\*\*)/g);
+  for(const part of parts){
+   if(part.startsWith("**")&&part.endsWith("**")&&part.length>4){
+    const strong=document.createElement("strong");strong.textContent=part.slice(2,-2);parent.appendChild(strong)
+   }else parent.appendChild(document.createTextNode(part))
+  }
+ }
+ for(const line of String(text).split(/\r?\n/)){
+  const item=line.match(/^\s*[-*+]\s+(.*)$/);
+  if(item){
+   if(!list){list=document.createElement("ul");node.appendChild(list)}
+   const li=document.createElement("li");inline(li,item[1]);list.appendChild(li)
+  }else{
+   list=null;
+   if(line===""){node.appendChild(document.createElement("br"));continue}
+   const paragraph=document.createElement("div");inline(paragraph,line);node.appendChild(paragraph)
+  }
+ }
+}
 window.jarvisHudMessage=(title,text)=>say("j","<small>"+esc(String(title))+"</small><br>"+esc(String(text)));
 // ── Bridge al runtime Jarvis (SSE + POST), iniettato da JARVIS VII ──────────
 const API={chat:"/api/chat",plugin:"/api/plugin",iris:"/api/iris",events:"/events",tasks:"/api/tasks"};
-let bridgeConnected=false,assistantState="starting",streamingChatNode=null;
+let bridgeConnected=false,bridgeRetrying=false,assistantState="starting",streamingChatNode=null;
 const taskState=new Map();
 async function post(path,payload){const r=await fetch(path,{method:"POST",headers:{"Content-Type":"application/json","X-HUD":"1"},body:JSON.stringify(payload)});if(!r.ok)throw new Error("Bridge HTTP "+r.status)}
-function showBridgeState(){const c=assistantState.toUpperCase().replaceAll("_"," ");$("log").innerHTML=bridgeConnected?`Bridge collegato · <b>${c}</b>`:"Bridge Jarvis: disconnesso — chat in modalità demo locale."}
+async function getWithRetry(path,options={},attempts=3){
+ let lastError;
+ for(let attempt=0;attempt<attempts;attempt++){
+  const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),8000);let response;
+  try{response=await fetch(path,{...options,signal:controller.signal})}
+  catch(error){lastError=error.name==="AbortError"?new Error("Richiesta al bridge scaduta"):error}
+  finally{clearTimeout(timeout)}
+  if(response){
+   if(response.ok)return response;
+   lastError=new Error("Bridge HTTP "+response.status);
+   if(response.status<500&&response.status!==429)throw lastError
+  }
+  if(attempt<attempts-1)await new Promise(resolve=>setTimeout(resolve,300*2**attempt))
+ }
+ throw lastError||new Error("Richiesta al bridge non riuscita")
+}
+function showBridgeState(){
+ const log=$("log");log.replaceChildren();
+ if(bridgeConnected){log.append("Bridge collegato · ");const state=document.createElement("b");state.textContent=assistantState.toUpperCase().replaceAll("_"," ");log.appendChild(state)}
+ else log.textContent=bridgeRetrying?"Bridge Jarvis: connessione interrotta — tentativo di riconnessione.":"Bridge Jarvis: disconnesso — chat in modalità demo locale."
+}
 function renderTaskDots(){
  const box=$("task-dots"),all=[...taskState.values()],active=all.filter(t=>["pending","running"].includes(t.status));
  const recent=all.filter(t=>!["pending","running"].includes(t.status)).sort((a,b)=>(b.updated_at||0)-(a.updated_at||0)).slice(0,6);
@@ -464,13 +546,16 @@ function setTaskSnapshot(tasks){taskState.clear();if(Array.isArray(tasks))tasks.
 function handleTaskEvent(event){if(!event||typeof event.task_id!=="string")return;const current=taskState.get(event.task_id)||{};
  taskState.set(event.task_id,{...current,task_id:event.task_id,role:event.role||current.role||"worker",status:event.status||current.status||"pending",progress:Number.isFinite(event.progress)?event.progress:(current.progress||0),progress_message:event.message||current.progress_message||"",updated_at:event.timestamp||Date.now()/1000});renderTaskDots()}
 async function showTaskDetails(taskId){const task=taskState.get(taskId);if(!task)return;
- try{const response=await fetch(`${API.tasks}/${encodeURIComponent(taskId)}`,{headers:{"X-HUD":"1"}});
+ const pending=window.jarvisHudMessage(`Task ${task.role}`,"Caricamento dettagli...");
+ try{const response=await getWithRetry(`${API.tasks}/${encodeURIComponent(taskId)}`,{headers:{"X-HUD":"1"}});
   if(!response.ok)throw new Error("Bridge HTTP "+response.status);const payload=await response.json(),detail=payload.task||task;
-  const text=detail.result||detail.error||detail.progress_message||`Stato: ${detail.status}`;
-  window.jarvisHudMessage(`Task ${detail.role} · ${detail.status}`,text)
- }catch(error){say("system",esc("Impossibile leggere il task: "+error.message))}
+  const text=detail.result||detail.error||detail.progress_message||"Nessun dettaglio disponibile.";
+  pending.replaceWith(window.jarvisHudMessage(`Task ${detail.role} · ${detail.status}`,text))
+ }catch(error){pending.replaceWith(say("system",esc("Impossibile leggere il task: "+error.message)))}
 }
-function handleEvent(m){switch(m.type){case"hello":bridgeConnected=true;assistantState=m.state||"starting";showBridgeState();handleBootState(assistantState);renderStats(m.stats);renderPlugins(m.plugins);setTaskSnapshot(m.tasks);if(m.runtime){const t=m.runtime.task||{};setTR(t.progress,t.status)}if(m.speaking)amp=.8;break;case"stats":renderStats(m.stats);break;case"plugins":renderPlugins(m.items);break;case"state":assistantState=m.state||"unknown";showBridgeState();handleBootState(assistantState);break;case"speak":amp=m.on?(Number.isFinite(m.level)?Math.max(0,Math.min(1,m.level)):.8):0;break;case"chat":say(m.role==="user"?"u":(m.role==="system"?"system":"j"),esc(String(m.text)));break;case"chat_stream":if(m.phase==="start"){streamingChatNode=say("j","")}else if(m.phase==="append"&&streamingChatNode){streamingChatNode.textContent+=String(m.text||"");$("msgs").scrollTop=1e9}else if(m.phase==="end"){streamingChatNode=null}break;case"runtime":const t=m.runtime&&m.runtime.task||{};setTR(t.progress,t.status);break;case"task_snapshot":setTaskSnapshot(m.tasks);break;case"task_event":handleTaskEvent(m.event);break;case"command":handleCommand(m);break;case"shutdown":bridgeConnected=false;showBridgeState();break}}
+$("symbiosis-clipboard-reveal").onclick=async()=>{const output=$("symbiosis-clipboard");if(output.textContent){output.textContent="";return}try{const response=await fetch("/api/symbiosis/clipboard",{headers:{"X-HUD":"1"},cache:"no-store"});if(!response.ok)throw new Error(`HTTP ${response.status}`);const data=await response.json();output.textContent=data.items.map(item=>`${item.timestamp} · ${item.type}\n${item.content}`).join("\n\n")||"Nessun appunto salvato."}catch(error){output.textContent="Appunti non disponibili: "+error.message}};
+document.querySelectorAll("#symbiosis-network-controls [data-network]").forEach(button=>button.onclick=async()=>{const output=$("symbiosis-network");try{const response=await fetch("/api/symbiosis/network/"+button.dataset.network,{headers:{"X-HUD":"1"},cache:"no-store"});if(!response.ok)throw new Error(`HTTP ${response.status}`);output.textContent=JSON.stringify(await response.json(),null,2)}catch(error){output.textContent="Rete non disponibile: "+error.message}});$("symbiosis-network-hide").onclick=()=>{$("symbiosis-network").textContent=""};
+function handleEvent(m){switch(m.type){case"hello":bridgeConnected=true;assistantState=m.state||"starting";showBridgeState();handleBootState(assistantState);renderStats(m.stats);renderPlugins(m.plugins);setTaskSnapshot(m.tasks);if(m.runtime){const t=m.runtime.task||{};setTR(t.progress,t.status)}if(m.speaking)amp=.8;break;case"stats":renderStats(m.stats);$("symbiosis-status").textContent=m.symbiosis?JSON.stringify(m.symbiosis,null,2):"Non disponibile";break;case"plugins":renderPlugins(m.items);break;case"state":assistantState=m.state||"unknown";showBridgeState();handleBootState(assistantState);break;case"speak":amp=m.on?(Number.isFinite(m.level)?Math.max(0,Math.min(1,m.level)):.8):0;break;case"chat":{const node=say(m.role==="user"?"u":(m.role==="system"?"system":"j"),"");renderChatMarkdown(node,String(m.text));break}case"chat_stream":if(m.phase==="start"){streamingChatNode=say("j","");streamingChatNode.dataset.raw=""}else if(m.phase==="append"&&streamingChatNode){streamingChatNode.dataset.raw+=String(m.text||"");renderChatMarkdown(streamingChatNode,streamingChatNode.dataset.raw);$("msgs").scrollTop=1e9}else if(m.phase==="end"){streamingChatNode=null}break;case"runtime":const t=m.runtime&&m.runtime.task||{};setTR(t.progress,t.status);break;case"task_snapshot":setTaskSnapshot(m.tasks);break;case"task_event":handleTaskEvent(m.event);break;case"command":handleCommand(m);break;case"shutdown":bridgeConnected=false;showBridgeState();break}}
 // Jarvis guida la mappa 3D: comandi dal runtime.
 function handleCommand(m){try{switch(m.action){
  case"open_system":if(m.id)openSystem(m.id);break;
@@ -482,30 +567,62 @@ function handleCommand(m){try{switch(m.action){
  case"map_view":setVisualMode("map");break;
  case"top_view":setTopView(m.on);break;
  case"reveal":revealHumanoid(m.on);break;
- default:break}}catch(e){}}
-try{const ev=new EventSource(API.events);ev.onopen=()=>{bridgeConnected=true;showBridgeState()};ev.onerror=()=>{bridgeConnected=false;showBridgeState()};ev.onmessage=e=>{try{handleEvent(JSON.parse(e.data))}catch(x){}}}catch(e){}
+ default:break}}catch(e){say("system",esc("Comando HUD non riuscito: "+e.message))}}
+try{const ev=new EventSource(API.events);ev.onopen=()=>{bridgeConnected=true;bridgeRetrying=false;showBridgeState()};ev.onerror=()=>{bridgeConnected=false;bridgeRetrying=true;showBridgeState()};ev.onmessage=e=>{try{handleEvent(JSON.parse(e.data))}catch(x){console.warn("Evento HUD non valido",x)}}}catch(e){bridgeRetrying=false;showBridgeState();console.warn("Bridge HUD non disponibile",e)}
 // Toggle plugin dal runtime (click su un pianeta plugin nella mappa).
-function togglePlugin(plugin){if(!bridgeConnected||!plugin||!plugin.name)return;post(API.plugin,{name:plugin.name}).catch(e=>say("system","Impossibile cambiare "+plugin.name+": "+e.message))}
+function togglePlugin(plugin){if(!bridgeConnected||!plugin||!plugin.name)return;post(API.plugin,{name:plugin.name}).catch(e=>say("system",esc("Impossibile cambiare "+plugin.name+": "+e.message)))}
 // Tab SISTEMA: instrada le azioni al runtime (ui.py _system_action).
-function sysAction(a){if(!bridgeConnected){say("system","Bridge non connesso: azione '"+a+"' non inviata.");return}post("/api/system",{action:a}).catch(e=>say("system","Azione '"+a+"' non riuscita: "+e.message))}
-document.querySelectorAll("#sistema .sysrow").forEach(r=>{const b=r.querySelector(".sysbtn");if(b)b.onclick=()=>sysAction(r.dataset.a)});
+function sysAction(a){if(!bridgeConnected){say("system",esc("Bridge non connesso: azione '"+a+"' non inviata."));return}post("/api/system",{action:a}).catch(e=>say("system",esc("Azione '"+a+"' non riuscita: "+e.message)))}
+document.querySelectorAll("#sistema .sysrow,#plugins .sysrow").forEach(r=>{const b=r.querySelector(".sysbtn");if(b)b.onclick=()=>sysAction(r.dataset.a)});
 // ── Mappa 3D principale, reveal Iris e scala layout ─────────────────────────
 let topView=false;
 let visualMode="map";
-function setVisualMode(mode){visualMode="map";if(mode==="map"){document.body.classList.remove("hud-hidden");revealHumanoid(false)}$("mapview").classList.add("on")}
+function setVisualMode(mode){visualMode="map";if(mode==="map"){document.body.classList.remove("hud-hidden");saveHudLayout();revealHumanoid(false)}$("mapview").classList.add("on")}
 function setTopView(on){topView=on=on===undefined?!topView:on;setVisualMode("map");$("topview").classList.toggle("on",on);if(on){tP=1.5;dist=Math.max(dist,20)}else{tP=.38}}
 $("topview").onclick=()=>setTopView();
 const HUMANOID_URL="https://mira-humanoid.vercel.app/";
 let humanoidLoaded=false;
-function activateChat(){document.querySelectorAll("#tabs button").forEach(b=>b.classList.toggle("on",b.dataset.t==="chat"));$("chat").hidden=false;$("dati").hidden=true;$("sistema").hidden=true}
-function revealHumanoid(on){const wrap=$("humanoidWrap"),wasVisible=!wrap.hidden;on=on===undefined?!wasVisible:on;if(on===wasVisible)return;wrap.hidden=!on;document.body.classList.toggle("iris-mode",on);$("humanoid").classList.toggle("on",on);if(on){activateChat();if(renderFrame){cancelAnimationFrame(renderFrame);renderFrame=0}if(!humanoidLoaded){$("humanoidFrame").src=HUMANOID_URL;humanoidLoaded=true}}else if(!renderFrame){last=performance.now();lastRender=0;renderFrame=requestAnimationFrame(frame)}if(bridgeConnected)post(API.iris,{visible:on}).catch(e=>say("system","Cambio voce Iris/JARVIS non riuscito: "+e.message));if(on)say("system","Iris rivelata a schermo intero.")}
+function activateChat(){document.querySelectorAll("#tabs button").forEach(b=>b.classList.toggle("on",b.dataset.t==="chat"));$("chat").hidden=false;$("dati").hidden=true;$("sistema").hidden=true;$("plugins").hidden=true}
+function revealHumanoid(on){const wrap=$("humanoidWrap"),wasVisible=!wrap.hidden;on=on===undefined?!wasVisible:on;if(on===wasVisible)return;wrap.hidden=!on;document.body.classList.toggle("iris-mode",on);$("humanoid").classList.toggle("on",on);if(on){activateChat();if(renderFrame){cancelAnimationFrame(renderFrame);renderFrame=0}if(!humanoidLoaded){$("humanoidFrame").src=HUMANOID_URL;humanoidLoaded=true}}else{last=performance.now();lastRender=0;scheduleHudFrame()}if(bridgeConnected)post(API.iris,{visible:on}).catch(e=>say("system","Cambio voce Iris/JARVIS non riuscito: "+e.message))}
 $("humanoid").onclick=()=>revealHumanoid();
 $("mapview").onclick=()=>setVisualMode("map");
 $("humanoidClose").onclick=()=>revealHumanoid(false);
- $("hudHide").onclick=()=>document.body.classList.add("hud-hidden");
- $("hudRestore").onclick=()=>document.body.classList.remove("hud-hidden");
+const HUD_LAYOUT_KEY="jarvis.hud.layout.v1";
+function loadHudLayout(){
+ try{
+  const saved=JSON.parse(localStorage.getItem(HUD_LAYOUT_KEY)||"null");
+  if(!saved||typeof saved!=="object")return{};
+  const scale=Number(saved.scale);
+  const panels=saved.panels&&typeof saved.panels==="object"?saved.panels:{};
+  return{hidden:saved.hidden===true,scale:Number.isFinite(scale)?Math.max(60,Math.min(140,scale)):100,minimized:saved.minimized===true,panels:{left:panels.left!==false,info:panels.info!==false,bar:panels.bar!==false}}
+ }catch(error){console.warn("Ripristino layout HUD non riuscito",error);return{}}
+}
+function saveHudLayout(){
+ try{localStorage.setItem(HUD_LAYOUT_KEY,JSON.stringify({hidden:document.body.classList.contains("hud-hidden"),scale:Number($("scale").value)||100,minimized:$("pop").classList.contains("min"),panels:{left:!document.body.classList.contains("hud-panel-left-hidden"),info:!document.body.classList.contains("hud-panel-info-hidden"),bar:!document.body.classList.contains("hud-panel-bar-hidden")}}))}
+ catch(error){console.warn("Salvataggio layout HUD non riuscito",error)}
+}
+const savedHudLayout=loadHudLayout();
+document.body.classList.toggle("hud-hidden",savedHudLayout.hidden===true);
+$("scale").value=String(savedHudLayout.scale||100);
+function setHudPanel(id,visible){
+ const panel=$(id);if(!panel)return;
+ const panelClass=`hud-panel-${id}-hidden`;
+ document.body.classList.toggle(panelClass,!visible);
+ const button=document.querySelector(`[data-panel-target="${id}"]`);
+ if(button){button.setAttribute("aria-pressed",String(visible));button.setAttribute("aria-label",(visible?"Nascondi ":"Mostra ")+button.title)}
+}
+["left","info","bar"].forEach(id=>setHudPanel(id,savedHudLayout.panels?.[id]!==false));
+document.querySelectorAll("[data-panel-target]").forEach(button=>button.onclick=()=>{
+ const id=button.dataset.panelTarget;
+ setHudPanel(id,document.body.classList.contains(`hud-panel-${id}-hidden`));
+ saveHudLayout()
+});
+function applyHudScale(value){const scale=Math.max(60,Math.min(140,Number(value)||100))/100;document.querySelectorAll(".panel").forEach(panel=>panel.style.fontSize=scale+"em");document.querySelector(".hud").style.zoom=scale}
+applyHudScale($("scale").value);
+$("hudHide").onclick=()=>{document.body.classList.add("hud-hidden");saveHudLayout()};
+$("hudRestore").onclick=()=>{document.body.classList.remove("hud-hidden");saveHudLayout()};
 // Rimpicciolisci / ingrandisci i layout (scala i pannelli HUD).
-$("scale").oninput=e=>{const v=Number(e.target.value)||100;document.querySelectorAll(".panel").forEach(p=>p.style.fontSize=(v/100)+"em");document.querySelector(".hud").style.zoom=v/100};
+$("scale").oninput=e=>{applyHudScale(e.target.value);saveHudLayout()};
 // ── Fine ─────────────────────────────────────────────────────────────────────
 // ── Fine bridge ──────────────────────────────────────────────────────────────
 function ask(text){say("u",esc(text));const n=norm(text);amp=1;setTimeout(()=>{if(!token||true)amp=.25},1200);
@@ -518,10 +635,9 @@ function ask(text){say("u",esc(text));const n=norm(text);amp=1;setTimeout(()=>{i
  const hit=docs.map(d=>{const y=norm(d.join(" "));return[tk.filter(w=>y.includes(w)).length,d]}).filter(a=>a[0]>0).sort((a,b)=>b[0]-a[0]).slice(0,3);
  say("j",hit.length?hit.map(([,d])=>"<small>"+esc(d[0])+"</small><br>"+esc(d[2].slice(0,320))).join("<hr>"):"Nessun dato corrispondente nel report. Prova: porta, variabile, plugin, memoria, palette.")}
 $("send").onclick=()=>{const v=$("q").value.trim();if(v){$("q").value="";ask(v)}};$("q").onkeydown=e=>{if(e.key==="Enter")$("send").onclick()};
-say("j","JARVIS online. La mappa 3D è la schermata principale. Di' «Iris rivelati» per mostrare Iris.");
 function setTR(p,s){$("trt").textContent=`TaskRunner: ${p}% - ${s}`;$("trb").firstChild.style.width=p+"%"}
 $("px").onclick=()=>$("pop").hidden=true;
-const tgl=()=>{const m=$("pop").classList.toggle("min");$("pmn").textContent=m?"+":"−";$("pmn").title=m?"Espandi":"Riduci"};$("pmn").onclick=tgl;$("pn").onclick=()=>{if($("pop").classList.contains("min"))tgl()};
+const tgl=()=>{const m=$("pop").classList.toggle("min");$("pmn").textContent=m?"+":"−";$("pmn").title=m?"Espandi":"Riduci";saveHudLayout()};$("pmn").onclick=tgl;$("pn").onclick=()=>{if($("pop").classList.contains("min"))tgl()};
 const GK=["CPU","MEM","NET","GPU","TMP","UP","PROC","OS"],gEl={};
 GK.forEach(k=>{const d=document.createElement("div");d.className="g";d.title=k;d.innerHTML=`<svg viewBox="0 0 44 44"><circle class="bg" cx="22" cy="22" r="18"/><circle class="fg" cx="22" cy="22" r="18" stroke-dasharray="113.1" stroke-dashoffset="113.1"/><text x="22" y="22">N/D</text></svg>${k}`;$("gauges").appendChild(d);gEl[k]=[d.querySelector(".fg"),d.querySelector("text")]});
 function setG(k,p,txt){const[f,t]=gEl[k];if(!f)return;const ok=Number.isFinite(p);const pct=ok?Math.max(0,Math.min(100,p)):0;const c=p>90?"#ff3355":p>70?"#ff6b00":"#00d4ff";f.style.strokeDashoffset=113.1*(1-pct/100);f.style.stroke=c;t.textContent=ok?(txt??Math.round(p)+"%"):"N/D"}
@@ -530,7 +646,9 @@ function formatUptime(s){if(!Number.isFinite(s))return"N/D";const m=Math.floor(s
 // Telemetria reale dal bridge (nessuna gauge simulata).
 function renderStats(stats){const s=stats||{};const pc=v=>Number.isFinite(v)?Math.round(v)+"%":"N/D";setG("CPU",s.cpu,pc(s.cpu));setG("MEM",s.ram,pc(s.ram));setG("NET",Number.isFinite(s.net)?Math.min(100,s.net/1048576*10):null,formatRate(s.net));setG("GPU",s.gpu,pc(s.gpu));setG("TMP",Number.isFinite(s.temperature)?s.temperature:null,Number.isFinite(s.temperature)?s.temperature.toFixed(0)+"°":null);setG("UP",Number.isFinite(s.uptime)?Math.min(100,s.uptime/86400*100):null,formatUptime(s.uptime));setG("PROC",Number.isFinite(s.processes)?Math.min(100,s.processes/10):null,Number.isFinite(s.processes)?String(s.processes):null);setG("OS",s.os?100:null,s.os||null)}
 function renderPlugins(items){/* i plugin sono mostrati come pianeti nella mappa; toggle via bridge */window._plugins=Array.isArray(items)?items:[]}
-pick("core",false);renderFrame=requestAnimationFrame(frame);
+pick("core",false);
+if(savedHudLayout.minimized){$("pop").classList.add("min");$("pmn").textContent="+";$("pmn").title="Espandi"}
+scheduleHudFrame();
 </script>
 </body>
 </html>

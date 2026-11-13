@@ -13,10 +13,11 @@ from PyQt6.QtCore import QObject, pyqtSignal
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QLabel, QScrollArea
 
 from core.gemini_chat import GeminiChatResult
 from gemini_chat_window import GeminiChatPanel, GeminiChatWindow
+from gev_chat import GevJarvisChat
 from ui import JarvisUI, MainWindow
 
 
@@ -94,6 +95,43 @@ def test_show_gemini_chat_uses_dialog_fallback_when_panel_missing(monkeypatch):
     assert any("finestra separata" in item for item in window._log_sig.messages)
 
 
+def test_gev_chat_toggle_resizes_map_and_focuses_input():
+    class _Panel:
+        def __init__(self):
+            self.visible = False
+            self.focused = False
+            self._input = SimpleNamespace(setFocus=lambda: setattr(self, "focused", True))
+
+        def setVisible(self, visible):
+            self.visible = visible
+
+    class _Splitter:
+        def __init__(self):
+            self.sizes = []
+
+        def width(self):
+            return 900
+
+        def setSizes(self, sizes):
+            self.sizes = sizes
+
+    class _Toggle:
+        def setChecked(self, _checked):
+            pass
+
+    panel = _Panel()
+    splitter = _Splitter()
+    window = SimpleNamespace(_gev_jarvis_chat=panel)
+
+    MainWindow._set_gev_chat_visible(window, True, splitter, _Toggle())
+    assert panel.visible and panel.focused
+    assert splitter.sizes == [600, 300]
+
+    MainWindow._set_gev_chat_visible(window, False, splitter, _Toggle())
+    assert not panel.visible
+    assert splitter.sizes == [900, 0]
+
+
 @pytest.fixture
 def app():
     return QApplication.instance() or QApplication([])
@@ -108,7 +146,10 @@ def test_chat_panel_sends_and_displays_mocked_gemini_reply(monkeypatch, app):
         timeout_ms=30_000,
         thinking_level="high",
         include_thoughts=True,
+        on_chunk=None,
     ):
+        if on_chunk is not None:
+            on_chunk("Risposta di test")
         requests.append(
             {
                 "prompt": prompt,
@@ -155,8 +196,10 @@ def test_chat_panel_sends_and_displays_mocked_gemini_reply(monkeypatch, app):
         "include_thoughts": True,
     }
     assert panel._transcript.toPlainText().strip().endswith(
-        "Gemini: Risposta di test"
+        "Risposta di test"
     )
+    assert "You:" not in panel._transcript.toPlainText()
+    assert "Gemini:" not in panel._transcript.toPlainText()
     assert not panel._thoughts_button.isHidden()
     assert panel._thoughts_button.text() == "THOUGHT SUMMARY (1)"
     assert panel._thoughts_view.isHidden()
@@ -166,10 +209,86 @@ def test_chat_panel_sends_and_displays_mocked_gemini_reply(monkeypatch, app):
     panel.close()
 
 
+def test_gemini_chat_renders_streamed_markdown_without_changing_previous_turns(app):
+    panel = GeminiChatPanel()
+    panel._transcript.setPlainText("Messaggio precedente")
+    cursor = panel._transcript.textCursor()
+    cursor.movePosition(cursor.MoveOperation.End)
+    cursor.insertBlock()
+    panel._response_start = type(cursor)(cursor)
+    panel._response_start.setKeepPositionOnInsert(True)
+    panel._transcript.setTextCursor(cursor)
+    panel._responses.put(("chunk", "domanda", "**Tit", ()))
+    panel._responses.put(("chunk", "domanda", "olo**\n\n* primo", ()))
+    panel._responses.put(("chunk", "domanda", "\n* secondo", ()))
+    panel._responses.put(("ok", "domanda", "**Titolo**\n\n* primo\n* secondo", ()))
+    panel._poll_responses()
+    html = panel._transcript.toHtml()
+    text = panel._transcript.toPlainText()
+    assert "font-weight:700" in html
+    assert html.count("<li") == 2
+    assert text.count("Messaggio precedente") == 1
+    assert text.count("Titolo") == 1
+    assert "primo" in text and "secondo" in text
+    panel.close()
+
+
+def test_gemini_chat_renders_unstreamed_markdown_as_text_not_html(app):
+    panel = GeminiChatPanel()
+    panel._responses.put(("ok", "domanda", "**Risposta**\n\n- prima\n- <script>seconda</script>", ()))
+    panel._poll_responses()
+    html = panel._transcript.toHtml()
+    assert html.count("<li") == 2
+    assert "<script>" not in html
+    assert "seconda" in panel._transcript.toPlainText()
+    panel.close()
+
+
 def test_standalone_fallback_wraps_the_reusable_panel(app):
     window = GeminiChatWindow()
     assert isinstance(window.panel, GeminiChatPanel)
     window.close()
+
+
+def test_gev_jarvis_chat_submits_commands_and_displays_chat_events(app):
+    chat = GevJarvisChat()
+    commands = []
+    chat.commandSubmitted.connect(commands.append)
+
+    assert "#00060a" in chat.styleSheet()
+    assert "#010d14" in chat.styleSheet()
+    chat._input.setText("Vai a Roma")
+    chat._send()
+    chat.add_message("assistant", "Chrome sta mostrando Roma")
+    chat.add_message("system", "JARVIS non è ancora connesso.")
+
+    assert commands == ["Vai a Roma"]
+    assert chat.findChild(QLabel).text() == "JARVIS · GOD'S EYE VIEW"
+    assert "Chrome sta mostrando Roma" in chat._transcript.toPlainText()
+    assert "SISTEMA: JARVIS non è ancora connesso." in chat._transcript.toPlainText()
+    chat.close()
+
+
+def test_memory_rows_use_dark_background_and_escape_stored_html(monkeypatch, app):
+    from ui import MemoryOverlay
+
+    monkeypatch.setattr(
+        "memory.memory_manager.all_entries_for_ui",
+        lambda: [{
+            "key": "profile_<admin>",
+            "value": "<script>ignored()</script>",
+            "category": "profile",
+            "updated": "today",
+        }],
+    )
+    overlay = MemoryOverlay()
+
+    scroll = overlay.findChild(QScrollArea)
+    assert scroll is not None
+    assert "#010d14" in scroll.styleSheet()
+    labels = scroll.findChildren(QLabel)
+    assert any("&lt;script&gt;" in label.text() for label in labels)
+    overlay.close()
 
 
 def test_streaming_confirmation_signal_runs_prompt_on_ui_thread(app):

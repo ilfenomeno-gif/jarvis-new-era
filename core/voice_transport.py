@@ -12,6 +12,20 @@ from abc import ABC, abstractmethod
 from typing import Callable
 
 
+def live_audio_data(response) -> bytes:
+    """Extract Live inline audio without reading the SDK's warning-prone data property."""
+    content = getattr(response, "server_content", None)
+    turn = getattr(content, "model_turn", None)
+    parts = getattr(turn, "parts", None) or ()
+    chunks = []
+    for part in parts:
+        inline = getattr(part, "inline_data", None)
+        data = getattr(inline, "data", None)
+        if isinstance(data, bytes):
+            chunks.append(data)
+    return b"".join(chunks)
+
+
 class VoiceTransport(ABC):
     @abstractmethod
     def speak(self, text: str) -> None: ...

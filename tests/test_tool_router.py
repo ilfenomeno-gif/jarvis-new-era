@@ -1,10 +1,11 @@
 import ast
+import asyncio
 import json
 from pathlib import Path
 
 import pytest
 
-from core.tool_router import ALWAYS, BASE, ToolRouter
+from core.tool_router import ALWAYS, BASE, ToolRouter, connector_connection_id
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -72,6 +73,80 @@ def test_computer_use_tools_are_selected_for_perception_and_input_requests():
         router.select_for_request("Clicca sul pulsante in Notepad", declarations)
     ) == {"computer_input"}
     assert router.select_for_request("Dimmi una curiosità", declarations) == []
+
+
+@pytest.mark.parametrize(
+    "phrase",
+    [
+        "Cosa c'è sullo schermo?",
+        "Usa Google Lens",
+        "Analizza questa immagine",
+        "Cosa vedi",
+        "Amplifica la schermata",
+        "Leggi questa pagina",
+    ],
+)
+def test_screen_analysis_requests_force_gemini_vision_tool(phrase):
+    declarations = [
+        decl("capture_and_analyze_screen"),
+        decl("screen_process"),
+        decl("accessibility_read_screen"),
+        decl("computer_read_screen"),
+        decl("web_search"),
+    ]
+    router = ToolRouter()
+
+    assert names(router.select_for_request(phrase, declarations)) == {
+        "capture_and_analyze_screen"
+    }
+    assert names(router.select(phrase, declarations)) == {
+        "capture_and_analyze_screen"
+    }
+    assert "screen_process" not in names(router.select_for_request(phrase, declarations))
+
+
+def test_explicit_local_ocr_request_keeps_local_ocr_tools():
+    declarations = [
+        decl("capture_and_analyze_screen"),
+        decl("screen_process"),
+        decl("accessibility_read_screen"),
+        decl("computer_perception"),
+        decl("computer_read_screen"),
+    ]
+
+    assert names(
+        ToolRouter().select_for_request(
+            "Leggi il testo sullo schermo con OCR locale",
+            declarations,
+        )
+    ) == {
+        "accessibility_read_screen",
+        "computer_perception",
+        "computer_read_screen",
+    }
+
+
+@pytest.mark.parametrize("phrase", [
+    "Leggi questa pagina HTML e clicca il link",
+    "Leggi questa pagina e clicca il link",
+    "Controlla la CPU, leggi questa pagina e clicca il link",
+])
+def test_page_interaction_routes_to_browser_without_forcing_screen_analysis(phrase):
+    declarations = [decl("browser_control"), decl("capture_and_analyze_screen"), decl("check_cpu")]
+    router = ToolRouter()
+    for selected in (router.select_for_request(phrase, declarations), router.select(phrase, declarations)):
+        assert "browser_control" in names(selected)
+        assert "capture_and_analyze_screen" not in names(selected)
+    if "CPU" in phrase:
+        assert "check_cpu" in names(router.select_for_request(phrase, declarations))
+
+
+def test_explicit_screen_analysis_still_takes_priority_over_page_interaction():
+    declarations = [decl("browser_control"), decl("capture_and_analyze_screen")]
+    phrase = "Analizza questa schermata, leggi questa pagina e clicca il link"
+    assert names(ToolRouter().select_for_request(phrase, declarations)) == {
+        "capture_and_analyze_screen"
+    }
 
 
 def test_agent_loop_is_selected_for_explicit_multi_step_requests():
@@ -156,6 +231,151 @@ def test_keywords_pick_matching_tools_in_italian_and_english():
     assert "spotify_music_control" in names(router.select("play some music", SAMPLE))
     out = names(router.select("mostrami i terremoti di oggi", SAMPLE))
     assert "gev_mcp_get_earthquakes" in out and "weather_report" not in out
+
+
+@pytest.mark.parametrize(
+    ("phrase", "connector_id"),
+    [
+        ("Connetti GitHub", "github"),
+        ("Collega GitHub", "github"),
+        ("Accedi a GitHub", "github"),
+        ("Connetti Spotify", "spotify"),
+        ("Connect to Spotify", "spotify"),
+    ],
+)
+def test_spoken_connector_requests_resolve_and_select_connect_action(
+    phrase, connector_id
+):
+    connectors = [
+        {"id": "github", "name": "GitHub"},
+        {"id": "spotify", "name": "Spotify"},
+    ]
+    assert connector_connection_id(phrase, connectors) == connector_id
+    declarations = [decl("connect_service"), decl("connector_call"), decl("spotify_music_control")]
+    assert names(ToolRouter().select_for_request(phrase, declarations)) == {
+        "connect_service"
+    }
+
+
+def test_connector_intent_requires_explicit_verb_and_rejects_ambiguous_services():
+    connectors = [
+        {"id": "github", "name": "GitHub"},
+        {"id": "spotify", "name": "Spotify"},
+    ]
+    assert connector_connection_id("Come funziona GitHub?", connectors) is None
+    assert connector_connection_id("Connetti GitHub e Spotify", connectors) is None
+
+
+@pytest.mark.parametrize(
+    "phrase",
+    [
+        "Quanti repository ho su GitHub?",
+        "Quanti repo ho su GitHub?",
+        "Elenca i miei repository GitHub",
+        "Mostra i miei repo",
+    ],
+)
+def test_authenticated_github_repository_request_selects_dedicated_tool(phrase):
+    declarations = [
+        decl("github_user_repositories"),
+        decl("connector_call"),
+        decl("connectors_status"),
+    ]
+
+    assert names(ToolRouter().select_for_request(phrase, declarations)) == {
+        "github_user_repositories"
+    }
+
+
+@pytest.mark.parametrize(
+    "phrase",
+    [
+        "Jarvis, cerca repository con la parola python",
+        "Cerca repository su GitHub con python",
+        "Trova repo GitHub che usano FastAPI",
+    ],
+)
+def test_github_repository_search_beats_generic_web_search(phrase):
+    declarations = [
+        decl("github_search_repositories"),
+        decl("connector_call"),
+        decl("web_search"),
+    ]
+
+    router = ToolRouter()
+    selected = names(router.select_for_request(phrase, declarations))
+    session_selected = names(router.select(phrase, declarations))
+
+    assert selected == {"github_search_repositories"}
+    assert "web_search" not in selected
+    assert "github_search_repositories" in session_selected
+    assert "web_search" not in session_selected
+
+
+def test_historical_story_request_selects_web_research_without_gev():
+    declarations = [
+        decl("web_search"),
+        decl("research_agent"),
+        decl("gev"),
+        decl("gev_mcp_get_weather_map"),
+        decl("browser_control"),
+    ]
+
+    selected = names(
+        ToolRouter().select_for_request(
+            "Raccontami la storia di Roma",
+            declarations,
+        )
+    )
+
+    assert selected == {"web_search"}
+
+
+def test_spoken_connect_request_dispatches_action_without_model_guessing(monkeypatch):
+    import main
+
+    calls = []
+
+    class UI:
+        def write_log(self, message):
+            calls.append(("log", message))
+
+    live = main.JarvisLive.__new__(main.JarvisLive)
+    live.ui = UI()
+    live._asst_name = "Iris"
+    live._connector_registry = lambda: type(
+        "Registry",
+        (),
+        {"view": lambda _self: [{"id": "github", "name": "GitHub"}]},
+    )()
+    live._action_registry = type(
+        "ActionRegistry",
+        (),
+        {
+            "run": lambda _self, name, args, ctx: (
+                calls.append((name, args, ctx["player"])) or "OAuth avviato."
+            )
+        },
+    )()
+    live._hud = type(
+        "Hud",
+        (),
+        {"push_chat": lambda _self, role, message: calls.append((role, message))},
+    )()
+    live.speak = lambda message: calls.append(("spoken", message))
+    live._set_task_idle = lambda value: calls.append(("idle", value))
+
+    async def dispatch():
+        assert live._route_voice_transcript("Connetti GitHub") is True
+        await asyncio.sleep(0.05)
+
+    asyncio.run(dispatch())
+
+    assert any(
+        entry[0] == "connect_service" and entry[1] == {"connector_id": "github"}
+        for entry in calls
+    )
+    assert ("spoken", "OAuth avviato.") in calls
 
 
 def test_viewer_voice_commands_select_the_3d_tools():

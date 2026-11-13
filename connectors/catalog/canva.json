@@ -4,9 +4,27 @@
   "type": "remote-mcp",
   "transport": "streamable-http",
   "auth": "oauth2",
+  "endpoint": "https://api.canva.com/connect/v1/mcp",
+  "authorize_url": "https://www.canva.com/api/oauth/authorize",
+  "token_url": "https://api.canva.com/auth/v1/oauth/token",
+  "oauth_resource": "https://api.canva.com/connect/v1/mcp",
+  "client_id_env": "JARVIS_CANVA_CLIENT_ID",
+  "client_secret_env": "JARVIS_CANVA_CLIENT_SECRET",
+  "oauth_setup_url": "https://www.canva.com/developers/",
+  "redirect_uri": "http://127.0.0.1:8767/oauth/canva/callback",
+  "oauth_scopes": [
+    "profile:read",
+    "design:meta:read",
+    "design:content:read",
+    "design:content:write"
+  ],
   "scopes": ["design.read", "design.write"],
   "tool_refs": {
     "canva.search_designs": "design.read",
     "canva.create_design": "design.write"
+  },
+  "tool_map": {
+    "canva.search_designs": "search-designs",
+    "canva.create_design": "create-design"
   }
 }

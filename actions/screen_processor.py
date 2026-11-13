@@ -4,6 +4,7 @@ import asyncio
 import base64
 import io
 import json
+import os
 import re
 import shutil
 import sys
@@ -15,6 +16,10 @@ from typing import Optional
 
 import numpy as np
 import sounddevice as sd
+
+from core import audio_devices
+from core.voice_transport import live_audio_data
+from memory.config_manager import get_output_device
 
 try:
     import cv2
@@ -89,9 +94,24 @@ def _save_config_key(key: str, value) -> None:
 
 
 def _get_api_key() -> str:
-    key = _load_config().get("gemini_api_key", "")
+    key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
     if not key:
-        raise RuntimeError("gemini_api_key not found in config.")
+        try:
+            from core.secret_store import SecretStore
+
+            secrets = SecretStore(_BASE / "config" / "secrets.json")
+            key = secrets.get("gemini_api_key") or secrets.get("google_api_key") or ""
+        except Exception as exc:
+            print(f"[Vision] SecretStore lookup failed: {type(exc).__name__}")
+    if not key:
+        config = _load_config()
+        key = config.get("gemini_api_key") or config.get("google_api_key") or ""
+    if not key:
+        raise RuntimeError(
+            "Chiave API Gemini mancante nel file .env: imposta GEMINI_API_KEY "
+            "o GOOGLE_API_KEY, oppure configura gemini_api_key in "
+            "config/api_keys.json."
+        )
     return key
 
 
@@ -99,6 +119,7 @@ def _get_os() -> str:
     return _load_config().get("os_system", "windows").lower()
 
 _LIVE_MODEL         = "models/gemini-2.5-flash-native-audio-preview-12-2025"
+GEMINI_VISION_MODEL = "gemini-3.8-flash"
 _CHANNELS           = 1
 _RECEIVE_SAMPLE_RATE = 24_000
 _CHUNK_SIZE         = 1_024
@@ -133,6 +154,31 @@ def _compress(img_bytes: bytes, source_format: str = "PNG") -> tuple[bytes, str]
         print(f"[Vision] ⚠️  Image compress failed: {e}")
         return img_bytes, f"image/{source_format.lower()}"
 
+
+def _resize_vision_image(
+    image_bytes: bytes,
+    max_width: int = 1024,
+) -> tuple[bytes, str]:
+    """Return a JPEG image no wider than max_width for Gemini requests."""
+    if not _PIL:
+        raise RuntimeError("Pillow è necessario per ridimensionare l'immagine Vision.")
+    if max_width < 1:
+        raise ValueError("max_width must be positive.")
+    try:
+        image = PIL.Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        if image.width > max_width:
+            height = max(1, round(image.height * max_width / image.width))
+            image = image.resize(
+                (max_width, height),
+                PIL.Image.Resampling.LANCZOS,
+            )
+        output = io.BytesIO()
+        image.save(output, format="JPEG", quality=_JPEG_Q, optimize=True)
+    except Exception as exc:
+        raise RuntimeError(f"Impossibile preparare l'immagine per Gemini: {exc}") from exc
+    return output.getvalue(), "image/jpeg"
+
+
 def _capture_screen() -> tuple[bytes, str]:
 
     if not _MSS:
@@ -145,6 +191,39 @@ def _capture_screen() -> tuple[bytes, str]:
         png      = mss.tools.to_png(shot.rgb, shot.size)
 
     return _compress(png, "PNG")
+
+
+def _capture_vision_screen(mode: str = "screen") -> tuple[bytes, str]:
+    """Capture uncompressed screen pixels for the Vision resizing step."""
+    if mode not in {"screen", "active_window"}:
+        raise ValueError(f"Modalità di cattura non supportata: {mode!r}.")
+    if not _MSS:
+        raise RuntimeError("mss is not installed. Run: pip install mss")
+
+    window = None
+    if mode == "active_window":
+        try:
+            import pygetwindow
+        except ImportError as exc:
+            raise RuntimeError("pygetwindow è necessario per catturare la finestra attiva.") from exc
+        window = pygetwindow.getActiveWindow()
+        if window is None or window.isMinimized or window.width <= 0 or window.height <= 0:
+            raise RuntimeError("Nessuna finestra attiva visibile da catturare.")
+
+    with mss.mss() as sct:
+        if window is None:
+            target = sct.monitors[1] if len(sct.monitors) > 1 else sct.monitors[0]
+        else:
+            desktop = sct.monitors[0]
+            left = max(window.left, desktop["left"])
+            top = max(window.top, desktop["top"])
+            right = min(window.left + window.width, desktop["left"] + desktop["width"])
+            bottom = min(window.top + window.height, desktop["top"] + desktop["height"])
+            if right <= left or bottom <= top:
+                raise RuntimeError("La finestra attiva è fuori dallo schermo visibile.")
+            target = {"left": left, "top": top, "width": right - left, "height": bottom - top}
+        shot = sct.grab(target)
+        return mss.tools.to_png(shot.rgb, shot.size), "image/png"
 
 
 @dataclass(frozen=True)
@@ -433,8 +512,9 @@ class _VisionSession:
         transcript: list[str] = []
         try:
             async for response in self._session.receive():
-                if response.data:
-                    await self._audio_in.put(response.data)
+                audio_data = live_audio_data(response)
+                if audio_data:
+                    await self._audio_in.put(audio_data)
 
                 sc = response.server_content
                 if not sc:
@@ -467,19 +547,36 @@ class _VisionSession:
             raise  
 
     async def _play_loop(self) -> None:
-        stream = sd.RawOutputStream(
-            samplerate=_RECEIVE_SAMPLE_RATE,
-            channels=_CHANNELS,
-            dtype="int16",
-            blocksize=_CHUNK_SIZE,
-        )
-        stream.start()
+        try:
+            device = await asyncio.to_thread(
+                audio_devices.select_output, get_output_device(),
+                sample_rate=_RECEIVE_SAMPLE_RATE,
+            )
+            stream = sd.RawOutputStream(
+                samplerate=_RECEIVE_SAMPLE_RATE,
+                channels=_CHANNELS,
+                dtype="int16",
+                blocksize=_CHUNK_SIZE,
+                device=device,
+                extra_settings=audio_devices.output_extra_settings(device),
+            )
+            try:
+                stream.start()
+            except Exception:
+                stream.close()
+                raise
+        except (RuntimeError, sd.PortAudioError) as exc:
+            print("[Audio] Impossibile riprodurre l'audio. Verifica le "
+                  f"impostazioni di output di Windows ({exc})")
+            raise
         try:
             while True:
                 chunk = await self._audio_in.get()
                 await asyncio.to_thread(stream.write, chunk)
         except Exception as e:
             print(f"[Vision] ❌ Play error: {e}")
+            print("[Audio] Impossibile riprodurre l'audio. Verifica le "
+                  "impostazioni di output di Windows")
             raise
         finally:
             stream.stop()
@@ -585,7 +682,7 @@ def get_element_coordinates(element_name: str) -> tuple[int, int] | None:
         prompt = f"Return the 2D bounding box coordinates [ymin, xmin, ymax, xmax] of the '{element_name}' element on this screen. Return ONLY the coordinates."
         
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model=GEMINI_VISION_MODEL,
             contents=[img, prompt],
             config=types.GenerateContentConfig(
                 temperature=0.0,

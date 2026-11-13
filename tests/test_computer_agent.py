@@ -8,7 +8,11 @@ from core.computer_vision import ComputerVision
 
 def test_agent_uses_mock_browser_for_web_search():
     mock_browser = MockBrowser()
-    agent = ComputerAgent(browser=BrowserAutomation(mock_browser))
+    agent = ComputerAgent(
+        vision=ComputerVision(),
+        computer_input=ComputerInput(),
+        browser=BrowserAutomation(mock_browser),
+    )
 
     result = agent.execute_task("Cerca 'Jarvis' su Google")
 
@@ -40,9 +44,11 @@ def test_agent_uses_vision_and_mock_input_for_local_task():
         random_delay=lambda low, _high: low,
     )
 
-    result = ComputerAgent(vision=vision, computer_input=computer_input).execute_task(
-        "local: type Save = Draft"
-    )
+    result = ComputerAgent(
+        vision=vision,
+        computer_input=computer_input,
+        browser=BrowserAutomation(MockBrowser()),
+    ).execute_task("local: type Save = Draft")
 
     assert result.success
     assert result.mode == "local"
@@ -65,7 +71,11 @@ def test_agent_does_not_send_input_when_local_target_is_missing():
         sleeper=lambda _delay: None,
         random_delay=lambda low, _high: low,
     )
-    agent = ComputerAgent(vision=vision, computer_input=computer_input)
+    agent = ComputerAgent(
+        vision=vision,
+        computer_input=computer_input,
+        browser=BrowserAutomation(MockBrowser()),
+    )
 
     with pytest.raises(LookupError, match="no input was sent"):
         agent.execute_task("local: click Save")

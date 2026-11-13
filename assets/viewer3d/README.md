@@ -1,6 +1,6 @@
 # viewer3d
 
-Globo olografico (Three.js) mostrato nello stack centrale di `ui.py`. `viewer.bundle.js` è generato da `src/viewer.js` e committato, così l'app non richiede Node né rete a runtime. Three.js è MIT (vedi `LICENSES.md`).
+Viewer per modelli 3D (Three.js) mostrato nello stack centrale di `ui.py`. Non mostra più un globo o una scena segnaposto quando non è caricato un modello. `viewer.bundle.js` è generato da `src/viewer.js` e committato, così l'app non richiede Node né rete a runtime. Three.js è MIT (vedi `LICENSES.md`).
 
 Rigenerare il bundle (richiede Node), da questa cartella:
 
@@ -16,7 +16,9 @@ La licenza Apache-2.0 e la notice sono in `licenses/`.
 
 API JS esposta come `window.jarvisViewer`: `flyTo(lat, lon)`, `addMarker(lat, lon, label)`, `clearMarkers()`, `spin(on)`, `setMaterialStyle('hologram'|'blueprint'|'realistic')`, `setPartInfo({parte: descrizione})` (tooltip al passaggio del mouse), `applyPhysics('drop'|'impulse')`, `getState()`.
 
-Gli stati visuali sono definiti in `config/hud_states.json` e le durate in `config/hud_transitions.json`; PyQt6 interpola core, anelli, glow, waveform e particelle, mentre il viewer anima core, anelli e particelle con gli stessi parametri. Dopo aver modificato i JSON, eseguire `python -m core.registry_cli reload_hud_states` dalla cartella `Mark-LIV-main`: l'istanza attiva rileva il segnale su file e ricarica senza riavvio.
+Il renderer limita il DPR a 1.5, ridimensiona a 1024 px per lato le texture immagine dei modelli, mantiene le ombre disattivate salvo lo stile `realistic` e sospende l'animazione quando la pagina non è visibile. Marker e tracce dei voli rilasciano geometrie e materiali con `dispose()` quando vengono rimossi.
+
+Gli stati visuali sono definiti in `config/hud_states.json` e le durate in `config/hud_transitions.json`; PyQt6 gestisce gli effetti HUD, mentre il viewer usa i colori e le animazioni dei modelli caricati. Dopo aver modificato i JSON, eseguire `python -m core.registry_cli reload_hud_states` dalla cartella `Mark-LIV-main`: l'istanza attiva rileva il segnale su file e ricarica senza riavvio.
 
 Il clipping del modello usa i suoi bounds locali e rimane solidale alla trasformazione quando il modello ruota. Il renderer abilita lo stencil buffer per chiudere la superficie tagliata; `set_clipping` accetta `axis=x|y|z|off` e `position=0..1` (predefinito 0.5). Lo spin automatico resta disattivato finché il clipping è attivo.
 

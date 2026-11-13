@@ -1,6 +1,62 @@
 /* Shared structural hooks for panels admitted by the existing rail owners.
    Specific legacy component rules retain priority; no panel IDs are registered
    here. The rail itself remains pointer-transparent over the globe. */
+#panel-visibility-dock {
+  position: fixed;
+  top: 78px;
+  left: 50%;
+  z-index: 160;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  max-width: min(520px, calc(100vw - 24px));
+  padding: 5px 8px;
+  border: 1px solid var(--glass-border);
+  border-radius: 999px;
+  background: rgba(5, 10, 14, 0.82);
+  backdrop-filter: blur(12px);
+  transform: translateX(-50%);
+}
+
+#panel-visibility-dock .panel-visibility-dot {
+  display: flex;
+  width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid rgba(0, 212, 255, 0.42);
+  border-radius: 50%;
+  background: rgba(0, 212, 255, 0.12);
+  color: var(--accent);
+  font: 12px/1 var(--font-mono);
+  cursor: pointer;
+  transition:
+    background var(--transition-fast),
+    color var(--transition-fast),
+    border-color var(--transition-fast),
+    transform var(--transition-fast);
+}
+
+#panel-visibility-dock .panel-visibility-dot[aria-pressed='false'] {
+  border-color: var(--glass-border-hover);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-dim);
+}
+
+#panel-visibility-dock .panel-visibility-dot:hover,
+#panel-visibility-dock .panel-visibility-dot:focus-visible {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+  transform: scale(1.12);
+}
+
+.panel-dot-hidden {
+  display: none !important;
+}
+
 :is(#left-panel-stack, #right-context-rail)
   > [data-panel-id]:has(> [data-panel-surface]) {
   position: relative;

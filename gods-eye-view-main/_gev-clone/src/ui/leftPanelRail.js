@@ -36,7 +36,9 @@ export function layoutLeftPanelRail({
 }) {
   if (!stack) return;
 
-  const panels = [...stack.querySelectorAll(':scope > [data-panel-id]')];
+  const panels = [...stack.querySelectorAll(':scope > [data-panel-id]')].filter(
+    (panel) => !panel.classList.contains('panel-dot-hidden'),
+  );
   if (!panels.length) return;
   if (!hud.visible || hud.variant !== 'tactical') {
     for (const panel of panels.filter((item) =>

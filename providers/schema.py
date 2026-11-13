@@ -86,7 +86,7 @@ CORE_TOOLS: tuple[str, ...] = (
     "file_controller",
     "browser_control",
     "web_search",
-    "screen_process",
+    "capture_and_analyze_screen",
     "save_memory",
     "recall_memory",
     "undo",
@@ -451,7 +451,7 @@ if __name__ == "__main__":
 
     print("\n--- one converted declaration, in full ---")
     sample = next((t for t in openai
-                   if t["function"]["name"] == "screen_process"), openai[0])
+                   if t["function"]["name"] == "capture_and_analyze_screen"), openai[0])
     print(json.dumps(sample, indent=2)[:1200])
 
     print("\n--- prompt-mode fallback, first 6 lines ---")

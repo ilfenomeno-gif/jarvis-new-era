@@ -93,17 +93,25 @@ Checklist:
 1. Lasciare disattivata l'opzione in **Customize**, avviare Jarvis e dire:
    **«Rispondi: test microfono senza wake word»**. Il flusso attuale deve rispondere
    come prima.
-2. Aprire **Customize**, selezionare **Enable local wake phrase (Hey Jarvis)**,
-   applicare e riavviare la sessione. Verificare nel log lo stato attivo e che i
-   frame restino locali prima del trigger.
-3. Dire: **«Hey Jarvis»**, attendere il messaggio del log e poi dire:
+2. Aprire **Customize**, selezionare **Enable local wake phrase** (la frase
+   configurata), applicare e riavviare la sessione. In impostazione standard la
+   frase è **Hey Jarvis**.
+   Per un modello Iris già installato in openWakeWord, configurare
+   `JARVIS_WAKE_WORD_MODEL=hey_iris` e `JARVIS_WAKE_WORD_PHRASE=Hey Iris`
+   nell'ambiente prima di avviare Jarvis.
+   Verificare nel log lo stato attivo e che i frame restino locali prima del trigger.
+3. Dire la frase configurata, attendere il messaggio del log e poi dire:
    **«Che ora è?»**. Il secondo enunciato deve raggiungere Gemini e ricevere risposta.
 4. Dopo la risposta, parlare senza wake phrase: non deve essere inviato. Ripetere
-   **«Hey Jarvis»** per riaprire il gate.
+   la frase configurata per riaprire il gate.
 5. Disabilitare temporaneamente il pacchetto/modello o selezionare il setup solo
    dopo consenso: verificare un errore esplicito e che l'audio PC non sia inviato.
 6. Tornare a **Customize**, togliere il flag, applicare; verificare la persistenza
    `false` e il comportamento standard.
+
+Il nome predefinito dell'assistente è ora **Iris**; la wake phrase standard resta
+**Hey Jarvis** finché non viene installato/configurato un modello compatibile per
+Iris. Cambiare l'etichetta della frase non addestra né sostituisce il modello.
 
 ## 7. Recap (F8)
 

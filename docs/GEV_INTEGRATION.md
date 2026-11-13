@@ -122,6 +122,46 @@ preambolo vocale è generato da Gemini indipendentemente da questo.
   la UI Jarvis accetta solo `flight` e `satellite`, perciò il tipo `vessel`
   dichiarato dal plugin non è inoltrabile e produce un errore esplicito
   (`../ui.py:4710-4714`).
+- La vista incorporata espone la chat JARVIS collegata al dispatcher GEV e un
+  accesso separato a Gemini. I messaggi Gemini restano nella propria sessione
+  e non controllano il browser o la mappa. `JARVIS HOME` torna alla schermata
+  principale senza ricaricare la finestra; il flusso dei plugin Netflix/Prime
+  conserva la conferma esplicita per DRM.
+- I comandi espliciti del browser aprono URL in una scheda di Chrome tramite
+  l'eseguibile installato, senza flag di profilo, modalità app o remote
+  debugging. Chrome riutilizza così il profilo predefinito dell'utente.
+  Jarvis non controlla automaticamente questa finestra; navigazione, zoom e
+  interazioni successive si eseguono direttamente in Chrome.
+  La chat JARVIS invia i messaggi al dispatcher GEV: `vai a ...` e `portami a
+  ...` centrano la mappa God’s Eye View sulla località. Solo i comandi browser
+  espliciti (`cerca ...`, `metti video ...`, `apri YouTube`) aprono Chrome.
+  La chat visibile nella GEV è solo JARVIS; Gemini si apre
+  separatamente dal pulsante dedicato e conserva la propria cronologia.
+- I pulsanti circolari CHROME e CHAT persistono la visibilità dei due pannelli;
+  il pannello informativo Chrome e la chat restano montati durante il cambio
+  di visibilità.
+- Il pulsante ESPANDI/RIDUCI dà più spazio al pannello GEV senza smontare la chat.
+- I comandi diretti `vai a ...` e `portami a ...` vengono inoltrati al plugin
+  GEV e muovono la camera della mappa Cesium. Non avviano Chrome. Le richieste
+  geografiche contestuali e storiche continuano a usare lo stesso plugin.
+- JARVIS riconosce «apri GEV» (anche «apri God's Eye View»), «tour Europa»,
+  «elenca paesi europei», «ferma tour»,
+  «zoom avanti/indietro» e «comandi GEV». Il tour visita le coordinate delle
+  capitali di 50 Paesi e microstati, con una pausa di 2,5 secondi per tappa;
+  la chat indica il Paese corrente e il tour può essere interrotto. L'apertura
+  e il tour portano in primo piano la scheda GEV e la relativa mappa incorporata.
+- Il vecchio viewer 3D non mostra più globo, orbite o particelle di fallback:
+  si apre solo con un modello caricato e si chiude quando il modello viene
+  rimosso. La mappa geografica resta la God’s Eye View.
+- In modalità Iris l'interfaccia HUD riduce la chat alla barra di input ma
+  mantiene disponibili le schede Chat, Dati, Sistema e Plugins;
+  l'input usa lo stesso endpoint JARVIS (`/api/chat`) della HUD e del pannello
+  GEV, mentre Iris cambia solo la voce. I messaggi di stato non vengono
+  aggiunti quando Iris viene mostrata. I pannelli HUD nascosti restano montati
+  e vengono disattivati tramite `visibility`, senza modificare la griglia.
+- I tre pannelli HUD (metriche, chat/dati e barra comandi) si possono
+  nascondere e ripristinare dai pulsanti circolari accanto al titolo; visibilità
+  e scala vengono conservate in `localStorage`.
 
 ### Verifiche eseguite
 
@@ -297,3 +337,43 @@ incrementale di zoom, tilt, rotate e reset. Il fly-to è responsabilità del
 tool MCP `show_in_gods_eye_view`. I test del bridge incrementale non
 equivalgono a una verifica del rendering nella finestra QWebEngine o al
 riconoscimento vocale tramite microfono.
+
+## Tour Europa, Chrome e test manuale
+
+I comandi testuali/vocali «tour Europa», «ferma tour», «elenca paesi europei»,
+«zoom avanti» e «zoom indietro» controllano la mappa. Per i siti web Jarvis
+apre una scheda in Chrome usando il profilo predefinito; per proteggere la
+sessione personale non si collega al browser via DevTools. I comandi vocali di
+zoom Chrome portano in primo piano una finestra Chrome e inviano le scorciatoie
+`Ctrl++`, `Ctrl+-` e `Ctrl+0`. «Amplifica la schermata» attiva la Lente di
+ingrandimento di Windows; «disattiva lente» chiude l'istanza avviata da Jarvis
+senza terminare istanze avviate dall'utente. «Chrome a schermo intero» allarga
+il pannello GEV.
+Se Chrome non è installato, impostare `JARVIS_CHROME_PATH`; Jarvis non scarica
+o installa il browser.
+
+Verifica manuale GEV:
+
+1. Avviare Jarvis e attendere lo stato GEV pronto; in alternativa avviare il
+   server di sviluppo GEV del checkout (porta predefinita `4173`).
+2. Aprire `http://localhost:4173` in un browser e verificare che la mappa sia
+   visibile. Nel pannello Jarvis aprire GEV/Chrome: il link viene aperto in una
+   scheda del Chrome predefinito.
+3. Provare «elenca paesi europei», «tour Europa» e «ferma tour»; verificare
+   elenco, spostamenti della camera e interruzione.
+4. Aprire YouTube dal pannello Chrome e verificare che sia autenticato con il
+   profilo Chrome predefinito. Provare «ingrandisci», «zoom out» e «ripristina
+   zoom», verificando anche che lo zoom della mappa resti indipendente.
+5. Provare «amplifica la schermata» e «disattiva lente» per controllare
+   l'attivazione e la chiusura della Lente di Windows.
+6. Provare «Chrome a schermo intero» e «riduci Chrome» e verificare che la chat
+   resti montata. Se la pagina mostra il consenso YouTube, completarlo
+   direttamente nella finestra Chrome.
+
+Le connessioni OAuth sono disponibili dalla voce **INTEGRAZIONI**. Prima di
+collegare GitHub o Google Workspace occorre registrare un'app OAuth presso il
+provider e impostare `JARVIS_GITHUB_CLIENT_ID`/`JARVIS_GITHUB_CLIENT_SECRET` o
+`JARVIS_GOOGLE_CLIENT_ID`/`JARVIS_GOOGLE_CLIENT_SECRET`. I redirect loopback
+registrati devono corrispondere esattamente agli URI nel catalogo; autorizzazione
+usa Authorization Code + PKCE, e i token ottenuti sono conservati nel SecretStore
+cifrato. Non inserire credenziali client nel repository.

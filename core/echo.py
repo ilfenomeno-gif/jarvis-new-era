@@ -116,7 +116,7 @@ def band_energies(pcm, sr: int) -> np.ndarray:
 
 
 class EchoGuard:
-    """Classifies microphone blocks while the assistant is speaking.
+    """Classify microphone blocks without muting capture during assistant speech.
 
     Usage: `note_output()` from the playback path, `is_user_speech()` from the
     microphone callback. Both are cheap enough to sit in an audio thread — one
@@ -312,9 +312,9 @@ class EchoGuard:
 
 
 class FullDuplexAudioGate:
-    """Bounded in-memory pre-roll for an explicitly enabled speech interrupt."""
+    """Buffer recent audio until VAD recognizes speech, then pass speech frames."""
 
-    def __init__(self, max_buffered_frames: int = 24) -> None:
+    def __init__(self, max_buffered_frames: int = 4) -> None:
         if max_buffered_frames <= 0:
             raise ValueError("max_buffered_frames must be positive")
         self._frames = deque(maxlen=max_buffered_frames)

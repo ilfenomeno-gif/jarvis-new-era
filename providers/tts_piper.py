@@ -317,7 +317,7 @@ class PiperTTS:
 
     # -- the contract -------------------------------------------------------
     async def speak(self, text: str, voice: str = "",
-                    language: str = "") -> AsyncIterator[bytes]:
+                    language: str = "", speed_multiplier: float = 1.0) -> AsyncIterator[bytes]:
         """24 kHz mono PCM, a sentence at a time.
 
         Sentence by sentence so speech starts before the whole answer has been
@@ -331,20 +331,21 @@ class PiperTTS:
         rate = int(getattr(model.config, "sample_rate", 22050))
 
         for sentence in _split(text):
-            pcm = await asyncio.to_thread(self._synth, model, sentence)
+            pcm = await asyncio.to_thread(self._synth, model, sentence, speed_multiplier)
             for piece in audio.chunk(audio.resample(pcm, rate,
                                                     audio.SPEAKER_RATE)):
                 yield piece
 
-    def _synth(self, model, sentence: str) -> bytes:
+    def _synth(self, model, sentence: str, speed_multiplier: float = 1.0) -> bytes:
         from piper import SynthesisConfig
 
         cfg = None
-        if self.speed and abs(self.speed - 1.0) > 0.01:
+        speed = self.speed * speed_multiplier
+        if speed and abs(speed - 1.0) > 0.01:
             try:
                 # Piper's "length scale" is the inverse of speed: a longer
                 # sentence takes more time, so 2x speed is 0.5 length.
-                cfg = SynthesisConfig(length_scale=1.0 / self.speed)
+                cfg = SynthesisConfig(length_scale=1.0 / speed)
             except Exception:
                 cfg = None
         out = []

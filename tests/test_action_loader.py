@@ -5,8 +5,6 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import pytest
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from core.action_loader import discover_actions
@@ -94,5 +92,53 @@ def test_bundled_actions_are_discovered():
         Path(__file__).resolve().parents[1] / "actions", logger=lambda _m: None
     )
 
-    assert {"weather_report", "send_message", "reminder"} <= registry.names()
+    assert {
+        "weather_report",
+        "send_message",
+        "reminder",
+        "capture_and_analyze_screen",
+    } <= registry.names()
+    vision_tool = next(
+        declaration
+        for declaration in registry.get_tool_declarations()
+        if declaration["name"] == "capture_and_analyze_screen"
+    )
+    assert "Gemini Vision" in vision_tool["description"]
+    assert "without asking for confirmation" in vision_tool["description"]
+    assert "question" in vision_tool["parameters"]["properties"]
+    assert registry.risk_class("capture_and_analyze_screen") == "read"
+    assert "confirmed" not in vision_tool["parameters"]["properties"]
     assert registry.risk_class("weather_report") == "read"
+
+
+def test_discovery_can_install_missing_declared_dependency_and_retry(
+    tmp_path, monkeypatch
+):
+    actions_dir = tmp_path / "actions"
+    actions_dir.mkdir()
+    (actions_dir / "deferred_action.py").write_text(
+        "import jarvis_test_dependency\n"
+        "def run(parameters):\n    return jarvis_test_dependency.RESULT\n"
+        "TOOL = {'name': 'deferred_action', 'description': 'test', "
+        "'parameters': {'type': 'OBJECT', 'properties': {}}, 'handler': run}\n",
+        encoding="utf-8",
+    )
+    dependency_module = tmp_path / "jarvis_test_dependency.py"
+    monkeypatch.delitem(sys.modules, "actions.deferred_action", raising=False)
+    monkeypatch.delitem(sys.modules, "jarvis_test_dependency", raising=False)
+    requests = []
+
+    def install_missing(exc):
+        requests.append(exc.name)
+        dependency_module.write_text("RESULT = 'loaded'\n", encoding="utf-8")
+        monkeypatch.syspath_prepend(str(tmp_path))
+        return True
+
+    registry = discover_actions(
+        actions_dir,
+        logger=lambda _message: None,
+        recover_missing_dependency=install_missing,
+    )
+
+    assert requests == ["jarvis_test_dependency"]
+    assert registry.run("deferred_action", {}) == "loaded"

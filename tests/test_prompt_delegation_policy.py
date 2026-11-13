@@ -61,6 +61,10 @@ def test_live_system_prompt_includes_policy_without_conflicting_duplicate(
     assert "cancel_task" in final_prompt
     assert "get_task_result" in final_prompt
     assert "test security policy" in final_prompt
+    assert "[WEB RESEARCH]" in final_prompt
+    assert "discursive response" in final_prompt
+    assert "raw URLs, titles, snippets, or result dumps" in final_prompt
+    assert config.response_modalities == ["AUDIO"]
     assert (
         "Per la politica di delega dei task in background, segui le "
         "istruzioni del system prompt."

@@ -20,7 +20,8 @@ def test_hud_html_has_sistema_tab():
                    "dictation", "customize", "audio", "memory", "plugins"):
         assert f'data-a="{action}"' in html, action
     # tab switcher includes sistema
-    assert '["chat","dati","sistema"]' in html
+    assert '["chat","dati","sistema","plugins"]' in html
+    assert '#plugins .sysrow' in html
 
 
 def test_bridge_system_endpoint_fires_callback():

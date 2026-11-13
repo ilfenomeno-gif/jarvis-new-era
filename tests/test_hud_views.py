@@ -23,7 +23,7 @@ def test_hud_html_has_top_view_humanoid_scale():
     assert '#humanoidWrap{position:fixed;inset:0;width:100vw;height:100vh' in html
     assert 'body.iris-mode .hud>*:not(#info){display:none!important}' in html
     assert 'body.iris-mode #tabs,body.iris-mode #tr{display:none!important}' in html
-    assert 'body.iris-mode #chat{display:flex!important}' in html
+    assert 'body.iris-mode #chat{display:flex!important;flex:0 1 auto' in html
     assert 'document.body.classList.toggle("iris-mode",on)' in html
     assert 'function activateChat()' in html
     assert 'cancelAnimationFrame(renderFrame)' in html
@@ -46,7 +46,10 @@ def test_hud_html_has_top_view_humanoid_scale():
     assert 'function pick(id,open=true){if(open)setVisualMode("map")' in html
     assert 'function openSystem(id,tr){if(!tr&&touring)' in html and \
            'setVisualMode("map");if((id||"main")===view)' in html
-    assert 'Iris rivelata a schermo intero.' in html
+    assert 'Iris rivelata a schermo intero.' not in html
+    assert 'JARVIS online. La mappa 3D è la schermata principale.' not in html
+    assert 'placeholder="Chiedi a Jarvis"' in html
+    assert 'body.iris-mode #msgs,body.iris-mode #task-dots{display:none!important}' in html
     assert 'post(API.iris,{visible:on})' in html
     # top view
     assert 'id="topview"' in html
@@ -100,8 +103,10 @@ def test_hud_control_new_actions_in_contract():
 
 def test_rivelati_phrase_routes_to_reveal():
     """The spoken phrase "Iris rivelati" triggers the reveal command."""
-    import main as main_module
     import inspect
+
+    import main as main_module
+
     text_src = inspect.getsource(main_module.JarvisLive._on_text_command)
     voice_src = inspect.getsource(main_module.JarvisLive._route_voice_transcript)
     assert "_hud_visibility_request" in text_src
@@ -119,3 +124,18 @@ def test_hud_visibility_phrase_requires_exact_iris_command():
     assert JarvisLive._hud_visibility_request("Mira rivelati") is None
     assert JarvisLive._hud_visibility_request("rivelati nella scena") is None
     assert JarvisLive._hud_visibility_request("Puoi rivelarti?") is None
+
+
+def test_text_iris_command_works_without_live_session_or_command_queue():
+    from types import SimpleNamespace
+
+    from main import JarvisLive
+
+    live = object.__new__(JarvisLive)
+    events = []
+    live._hud = SimpleNamespace(push_chat=lambda *args: events.append(args))
+    live._set_hud_humanoid_visible = lambda visible: events.append(("reveal", visible))
+    live._loop = None
+    live._on_text_command("Iris rivelati")
+    live._on_text_command("Iris nasconditi", from_hud=True)
+    assert events == [("user", "Iris rivelati"), ("reveal", True), ("reveal", False)]

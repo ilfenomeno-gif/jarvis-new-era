@@ -48,6 +48,11 @@ class McpStdioClient:
     def tools(self) -> tuple[dict, ...]:
         return self._tools
 
+    @property
+    def is_running(self) -> bool:
+        process = self._process
+        return process is not None and process.poll() is None
+
     def start(self) -> tuple[dict, ...]:
         if self._process is not None and self._process.poll() is None and self._tools:
             return self._tools

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import time
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -442,6 +443,25 @@ def test_capabilities_endpoint_is_opt_in_and_requires_dashboard_token(monkeypatc
     )
     assert response.status_code == 200
     assert response.json()["contractVersion"] == 1
+
+
+def test_remote_pairing_manual_key_length_matches_login_form():
+    from dashboard.server import DashboardServer
+
+    server = DashboardServer.__new__(DashboardServer)
+    server._pending_keys = {}
+    key = server.new_key()
+    login_html = (
+        Path(__file__).resolve().parents[1]
+        / "dashboard"
+        / "static"
+        / "login.html"
+    ).read_text(encoding="utf-8")
+
+    assert len(key) == 8
+    assert 'maxlength="8"' in login_html
+    assert "inp.value.length === 8" in login_html
+    assert "key.length < 8" in login_html
 
 
 def test_llm_judge_is_explicit_h4_stub(monkeypatch):

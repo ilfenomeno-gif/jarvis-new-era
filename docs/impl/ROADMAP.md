@@ -4,6 +4,22 @@ Repo: https://github.com/ilfenomeno-gif/jarvis-ultimate
 Origine: brainstorming "Jarvis al massimo potenziale" (4 sprint, 15 meccaniche).
 Lingua di lavoro: **italiano** (commenti, docstring, commit, recap).
 
+## Track architetturale — piattaforma modulare
+
+La migrazione architetturale incrementale è tracciata separatamente dalle
+meccaniche funzionali di questa roadmap. Vedi
+[`IMPL-ARCH-001-piattaforma-modulare.md`](./IMPL-ARCH-001-piattaforma-modulare.md)
+per diagnosi, milestone A0-A6, test, gate e rollback. Il suo stato iniziale è
+**GO CON MODIFICHE**: partire dalla baseline e non avviare una riscrittura
+big-bang. Avanzamento corrente: A0-A3.7 verificati offline: orchestratore →
+registry → plugin Computer con allow/deny/failure, plugin Terminal dietro la
+guardia legacy e characterization di mode/provider/session lifecycle con fake.
+La suite mirata A0-A3.7 ha 150 test passati; Ruff è pulito senza soppressione
+E731. `main.py` ha ricevuto in A3 il solo adattamento al constructor injection
+Computer; A4 deve restare extraction-only. Il runtime Live/UI non usa ancora il
+nuovo dispatch e manca ancora l'authorizer di produzione con conferma umana.
+Consultare il registro IMPL per i gate.
+
 ## COME USARLO IN VS CODE
 
 1. Copia questo file nel repo come `docs/impl/ROADMAP.md`.

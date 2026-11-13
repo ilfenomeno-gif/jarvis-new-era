@@ -8,12 +8,14 @@ import threading
 import time
 
 from PyQt6.QtCore import QTimer, pyqtSignal
+from PyQt6.QtGui import QTextCursor, QTextDocument, QTextDocumentFragment
 from PyQt6.QtWidgets import (
     QDialog,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QPlainTextEdit,
+    QTextEdit,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -28,11 +30,11 @@ _INPUT_LOGGER = logging.getLogger("jarvis.ui.input")
 class GeminiChatPanel(QWidget):
     closeRequested = pyqtSignal()
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, system_instruction: str | None = None):
         super().__init__(parent)
         self.setStyleSheet(
             "QWidget { background: #00060a; color: #8ffcff; }"
-            "QPlainTextEdit, QLineEdit {"
+            "QTextEdit, QPlainTextEdit, QLineEdit {"
             " background: #010d14; color: #d8f8ff;"
             " border: 1px solid #0d3347; padding: 7px;"
             "}"
@@ -43,15 +45,15 @@ class GeminiChatPanel(QWidget):
             "QPushButton:hover { border-color: #00d4ff; }"
         )
         self._history: list[dict] = []
+        self._system_instruction = system_instruction
         self._responses: queue.Queue[tuple[str, str, str, tuple[str, ...]]] = queue.Queue()
         self._prompt_router = PromptRouter()
+        self._response_start: QTextCursor | None = None
 
         layout = QVBoxLayout(self)
-        self._transcript = QPlainTextEdit()
+        self._transcript = QTextEdit()
         self._transcript.setReadOnly(True)
-        self._transcript.setPlaceholderText(
-            "Gemini text chat. Your conversation stays in this window."
-        )
+        self._transcript.setPlaceholderText("Your conversation appears here.")
         layout.addWidget(self._transcript, stretch=1)
 
         self._thoughts_button = QPushButton("THOUGHT SUMMARY")
@@ -111,7 +113,15 @@ class GeminiChatPanel(QWidget):
             return
 
         self._input.clear()
-        self._transcript.appendPlainText(f"You: {prompt}")
+        cursor = self._transcript.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        if not self._transcript.document().isEmpty():
+            cursor.insertBlock()
+        cursor.insertText(prompt)
+        cursor.insertBlock()
+        self._response_start = QTextCursor(cursor)
+        self._response_start.setKeepPositionOnInsert(True)
+        self._transcript.setTextCursor(cursor)
         self._thoughts_button.setChecked(False)
         self._thoughts_button.setVisible(False)
         self._thoughts_view.clear()
@@ -122,13 +132,18 @@ class GeminiChatPanel(QWidget):
 
         def request() -> None:
             try:
-                result = ask_gemini_with_thoughts(
-                    prompt,
-                    history=self._history,
-                    timeout_ms=60_000,
-                    thinking_level=self._prompt_router.thinking_level_for(prompt),
-                    include_thoughts=True,
-                )
+                request_options = {
+                    "history": self._history,
+                    "timeout_ms": 60_000,
+                    "thinking_level": self._prompt_router.thinking_level_for(prompt),
+                    "include_thoughts": True,
+                    "on_chunk": lambda chunk: self._responses.put(
+                        ("chunk", prompt, chunk, ())
+                    ),
+                }
+                if self._system_instruction is not None:
+                    request_options["system_instruction"] = self._system_instruction
+                result = ask_gemini_with_thoughts(prompt, **request_options)
                 self._responses.put(
                     ("ok", prompt, result.answer, result.thought_summaries)
                 )
@@ -150,32 +165,56 @@ class GeminiChatPanel(QWidget):
             raise
 
     def _poll_responses(self) -> None:
-        try:
-            status, prompt, result, thoughts = self._responses.get_nowait()
-        except queue.Empty:
-            return
+        while True:
+            try:
+                status, prompt, result, thoughts = self._responses.get_nowait()
+            except queue.Empty:
+                return
 
-        self._send_button.setEnabled(True)
-        self._input.setEnabled(True)
-        self._input.setFocus()
-        if status == "ok":
-            self._transcript.appendPlainText(f"Gemini: {result}\n")
-            if thoughts:
-                self._thoughts_button.setText(
-                    f"THOUGHT SUMMARY ({len(thoughts)})"
+            if status == "chunk":
+                cursor = self._transcript.textCursor()
+                cursor.movePosition(cursor.MoveOperation.End)
+                cursor.insertText(result)
+                self._transcript.setTextCursor(cursor)
+                continue
+
+            self._send_button.setEnabled(True)
+            self._input.setEnabled(True)
+            self._input.setFocus()
+            if status == "ok":
+                cursor = self._transcript.textCursor()
+                cursor.movePosition(QTextCursor.MoveOperation.End)
+                if self._response_start is not None:
+                    cursor.setPosition(
+                        self._response_start.position(), QTextCursor.MoveMode.KeepAnchor
+                    )
+                    cursor.removeSelectedText()
+                cursor.insertFragment(QTextDocumentFragment.fromMarkdown(
+                    result,
+                    QTextDocument.MarkdownFeature.MarkdownDialectGitHub
+                    | QTextDocument.MarkdownFeature.MarkdownNoHTML,
+                ))
+                self._transcript.setTextCursor(cursor)
+                self._transcript.ensureCursorVisible()
+                self._response_start = None
+                if thoughts:
+                    self._thoughts_button.setText(
+                        f"THOUGHT SUMMARY ({len(thoughts)})"
+                    )
+                    self._thoughts_button.setVisible(True)
+                    self._thoughts_view.setPlainText("\n\n".join(thoughts))
+                self._history.extend(
+                    [
+                        {"role": "user", "parts": [{"text": prompt}]},
+                        {"role": "model", "parts": [{"text": result}]},
+                    ]
                 )
-                self._thoughts_button.setVisible(True)
-                self._thoughts_view.setPlainText("\n\n".join(thoughts))
-            self._history.extend(
-                [
-                    {"role": "user", "parts": [{"text": prompt}]},
-                    {"role": "model", "parts": [{"text": result}]},
-                ]
-            )
-            self._status.setText("Ready")
-        else:
-            self._transcript.appendPlainText(f"Gemini error: {result}\n")
-            self._status.setText("Request failed; the conversation can continue.")
+                self._status.setText("Ready")
+            else:
+                self._response_start = None
+                self._status.setText(
+                    f"Request failed: {result}. The conversation can continue."
+                )
 
     def _thoughts_view_visibility(self, visible: bool) -> None:
         self._thoughts_view.setVisible(visible)

@@ -1,5 +1,6 @@
 #computer_settings.py
 import json
+import os
 import re
 import sys
 import time
@@ -246,6 +247,55 @@ def brightness_down():
 def close_app():
     if _OS == "Darwin": pyautogui.hotkey("command", "q")
     else:               pyautogui.hotkey("alt", "f4")
+
+
+def _close_app_target():
+    """Capture the Windows target before the confirmation changes focus."""
+    import psutil
+    import pywintypes
+    import win32gui
+    import win32process
+    from core.multi_monitor import _is_protected_process
+
+    try:
+        hwnd = win32gui.GetForegroundWindow()
+        if not hwnd or not win32gui.IsWindow(hwnd):
+            raise RuntimeError("Nessuna finestra attiva verificabile.")
+        _, pid = win32process.GetWindowThreadProcessId(hwnd)
+    except pywintypes.error as exc:
+        raise RuntimeError("Impossibile verificare la finestra attiva.") from exc
+    try:
+        if pid == os.getpid() or pid < 100:
+            raise RuntimeError("La finestra di Jarvis o di un processo protetto non può essere chiusa.")
+        process = psutil.Process(pid)
+        name = process.name()
+        if not name or _is_protected_process(pid, name):
+            raise RuntimeError("La finestra di Jarvis o di un processo protetto non può essere chiusa.")
+        created = process.create_time()
+    except psutil.Error as exc:
+        raise RuntimeError("Il processo selezionato non è verificabile.") from exc
+
+    def close_target():
+        try:
+            if not win32gui.IsWindow(hwnd):
+                raise RuntimeError("La finestra selezionata non è più disponibile.")
+            _, current_pid = win32process.GetWindowThreadProcessId(hwnd)
+            process = psutil.Process(pid)
+            current_name = process.name()
+            if (current_pid != pid or pid == os.getpid() or pid < 100 or not current_name
+                    or _is_protected_process(pid, current_name)
+                    or current_name.casefold() != name.casefold()
+                    or process.create_time() != created):
+                raise RuntimeError("La finestra selezionata non è più verificabile.")
+            win32gui.PostMessage(hwnd, 0x0010, 0, 0)  # WM_CLOSE, preserving app save prompts
+        except psutil.Error as exc:
+            raise RuntimeError("Il processo selezionato non è più disponibile.") from exc
+        except pywintypes.error as exc:
+            raise RuntimeError("Impossibile inviare la richiesta di chiusura alla finestra.") from exc
+        return "Richiesta di chiusura inviata alla finestra selezionata."
+
+    return close_target
+
 
 def close_window():
     if _OS == "Darwin": pyautogui.hotkey("command", "w")
@@ -823,12 +873,19 @@ def computer_settings(
         func = ACTION_MAP.get(action)
         if func is None:
             return f"Unknown action: '{raw_action}'."
+        if action == "close_app" and _OS == "Windows" and func is close_app:
+            try:
+                run = _close_app_target()
+            except (ImportError, OSError, RuntimeError) as exc:
+                return f"Impossibile richiedere la chiusura: {exc}"
+        else:
+            run = lambda f=func, a=action: (f(), f"{a} done.")[1]
         if confirm.pending_title():
             return ("There is already a confirmation waiting on screen. "
                     "Ask the user to answer that one first.")
         return confirm.request(
             key=action, title=title, detail=detail,
-            run=lambda f=func, a=action: (f(), f"{a} done.")[1],
+            run=run,
         )
 
     if action == "volume_set":

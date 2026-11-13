@@ -5,8 +5,8 @@ import json
 import os
 import re
 import subprocess
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 POLICY_PATH = BASE_DIR / "regole e vincoli" / "regole e vincoli.md"
@@ -46,7 +46,7 @@ _ALLOWED_USER_EXECUTABLES = {
 
 # Shells are available only to trusted internal actions, never to run_task.
 _INTERNAL_EXECUTABLES = {
-    "cmd", "cmd.exe", "powershell", "powershell.exe",
+    "chrome.exe", "magnify.exe", "cmd", "cmd.exe", "powershell", "powershell.exe",
 }
 
 

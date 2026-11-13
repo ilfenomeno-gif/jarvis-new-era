@@ -298,7 +298,8 @@ def test_sounddevice_playback_monitor_stops_on_cancellation(monkeypatch):
     wait_started = threading.Event()
     stop_event = threading.Event()
     playback_stopped = threading.Event()
-    monkeypatch.setattr(tts.sd, "play", lambda *_args: playing.set())
+    monkeypatch.setattr(tts.audio_devices, "select_output", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(tts.sd, "play", lambda *_args, **_kwargs: playing.set())
 
     def wait_for_playback():
         wait_started.set()
